@@ -1,0 +1,36 @@
+## Animation synthesizer configuration
+animation_model:
+  name: gpt-4.1            # Required: name of the model to use
+  provider: openai         # Required: provider of the model. Options: openai, gemini, vertex, groq, ollama, vllm-serve
+  num_ctx: null            # Optional: context window size. Only applies to locally hosted models.
+  vllm_serve_port: null    # Optional: port for vLLM server. Only applies if using vLLM via `vllm serve`
+  params:                  # Optional: parameters for the model. This will likely to vary from model to model.
+    temperature: null
+    top_p: null
+    seed: null
+
+## MoVer synthesizer configuration
+mover_model:
+  name: gpt-4.1            # Required: name of the model to use
+  provider: openai         # Required: provider of the model. Options: openai, gemini, vertex, groq, ollama, vllm-serve
+  num_ctx: null            # Optional: context window size. Only applies to locally hosted models.
+  vllm_serve_port: null    # Optional: port for vLLM server. Only applies if using vLLM via `vllm serve`.
+  params:
+    temperature: null
+    top_p: null
+    seed: null
+
+## Path configurations
+paths:
+  parent_dir: example_output/teaser                             # Required: output directory for generated files
+  svg_dir: examples/svg                                         # Required: directory containing SVG files
+  animation_prompts_file: examples/prompts/prompts_teaser.json  # Required: JSON file with animation prompts
+
+## Data conversion server settings
+server:
+  port: "3001"          # Required: port number for data conversion server
+  create_video: true    # Required: whether to create video output
+
+## Pipeline settings
+pipeline:
+  max_iter: 50          # Required: maximum iterations for animation generation

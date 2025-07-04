@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
+    <link rel="stylesheet" href="./index.css">
+
+    <script src="./gsap.min.js"></script>
+    <script src="./MotionPathPlugin.min.js"></script>
+    <script src="./EasePack.min.js"></script>
+    <script src="./api.js"></script>
+
+    <title>Document</title>
+  </head>
+  <body>
+    <p id="prompt">{{prompt}}</p>
+    <svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect id="black-square" x="175" y="68" width="50" height="50" fill="black"/>
+<circle id="black-circle" cx="200" cy="175" r="25" fill="black"/>
+<rect id="blue-square" x="175" y="227" width="50" height="50" fill="#506EEB"/>
+<circle id="blue-circle" cx="200" cy="328" r="25" fill="#506EEB"/>
+</svg>
+
+    <br>
+    <button onclick="play()">Play</button>
+    <button onclick="pause()">Pause</button>
+    <button onclick="convert()">Convert</button>
+    <p id="sys-msg-path" style="display:none"></p>
+    <script id="svg-script">
+      // Select the SVG elements
+const blackSquare = document.querySelector('#black-square');
+
+// Create a timeline object
+const tl = createTimeline();
+
+// Compute necessary variables. Comment each line of code with your reasoning
+// No additional computation is needed because the translation is directly specified as "to the right by 100 px".
+
+// Create the animation step by step. Comment each line of code with your reasoning
+translate(tl, blackSquare, 2, 100, 0, 0); // **Translate the black square to the right by 100 px over 2 seconds.**
+    </script>
+    <script src="./vis.js"></script>
+    <script src="./convert.js"></script>
+  </body>
+</html>

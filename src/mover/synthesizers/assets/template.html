@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
+    <link rel="stylesheet" href="./index.css">
+
+    <script src="./gsap.min.js"></script>
+    <script src="./MotionPathPlugin.min.js"></script>
+    <script src="./EasePack.min.js"></script>
+    <script src="./api.js"></script>
+
+    <title>Document</title>
+  </head>
+  <body>
+    <p id="prompt">{{prompt}}</p>
+    {{svg-code}}
+    <br>
+    <button onclick="play()">Play</button>
+    <button onclick="pause()">Pause</button>
+    <button onclick="convert()">Convert</button>
+    <p id="sys-msg-path" style="display:none"></p>
+    <script id="svg-script">
+      let placeholder = 0;
+    </script>
+    <script src="./vis.js"></script>
+    <script src="./convert.js"></script>
+  </body>
+</html>

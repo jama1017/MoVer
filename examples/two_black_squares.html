@@ -1,0 +1,68 @@
+<!DOCTYPE html><html lang="en"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <link rel="stylesheet" href="./index.css">
+    
+    <script src="./gsap.min.js"></script>
+    <script src="./MotionPathPlugin.min.js"></script>
+    <script src="./EasePack.min.js"></script>
+    <script src="./api.js"></script>
+
+    <title>two black squares</title>
+  </head>
+  <body>
+    <p id="prompt">translate the first black square to the right, then down, and then to the right. translate the second black square up</p>
+    <svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect id="black-square-1" x="98" y="175" width="50" height="50" fill="black"/>
+<rect id="black-square-2" x="251" y="175" width="50" height="50" fill="black"/>
+</svg>
+
+    <br>
+    <button onclick="play()">Play</button>
+    <button onclick="pause()">Save</button>
+    <button onclick="convert()">Convert</button>
+    <p id="sys-msg-path" style="display:none">sys_msg_api.json</p>
+    <div id="timeline-div">
+      <pre style="margin-left: 20px"><code id="timeline-container"></code></pre>
+    </div>
+    <script id="svg-script">// Select the SVG elements
+const blackSquare1 = document.querySelector('#black-square-1');
+const blackSquare2 = document.querySelector('#black-square-2');
+
+// Create a timeline object
+const tl = createTimeline();
+
+// Compute necessary variables. 
+// **Get the initial position of the first black square**
+const blackSquare1InitialPosition = getCenterPosition(blackSquare1);
+// **Get the size of the first black square**
+const blackSquare1Size = getSize(blackSquare1);
+
+// **Get the initial position of the second black square**
+const blackSquare2InitialPosition = getCenterPosition(blackSquare2);
+
+// Create the animation step by step.
+// **Translate the first black square to the right**
+translate(tl, blackSquare1, 1, 50, 0, 0);
+// **Then translate the first black square down**
+translate(tl, blackSquare1, 1, 0, 50, 1);
+// **Then translate the first black square to the right**
+translate(tl, blackSquare1, 1, 50, 0, 2);
+// **Translate the second black square up**
+translate(tl, blackSquare2, 1, 0, -50, 0);
+
+</script>
+    <script src="./vis.js"></script>
+    <script src="./convert.js"></script>
+
+    <script id="checker-script">
+      let ph = 1;
+    </script><!-- end of checker-script -->
+
+  
+
+</body></html>

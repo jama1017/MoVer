@@ -1,0 +1,8 @@
+[
+    {
+        "svg_name": "hi_start.svg",
+        "animation_prompt": "Move the orange circle above the rectangular shape. In the meantime, rotate the letter H clockwise by 90 degrees.",
+        "chat_id_name": "teaser_hi",
+        "has_run": false
+    }
+]

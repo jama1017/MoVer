@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
+    <link rel="stylesheet" href="./index.css">
+
+    <script src="./gsap.min.js"></script>
+    <script src="./MotionPathPlugin.min.js"></script>
+    <script src="./EasePack.min.js"></script>
+    <script src="./api.js"></script>
+
+    <title>teaser hi</title>
+  </head>
+  <body>
+    <p id="prompt">Move the orange circle above the rectangular shape. In the meantime, rotate the letter H clockwise by 90 degrees.</p>
+    <svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path id="ignore" d="M400 0H0V400H400V0Z" fill="url(#paint0_radial_450_452)"/>
+<path id="letter-H" d="M238 258H132C126 258 121.2 258.867 117.6 260.6C113.867 262.2 112 266 112 272V274H106V250C106 245.333 106.8 241.733 108.4 239.2C110 236.533 112.667 234.667 116.4 233.6C120.133 232.533 125.333 232 132 232H165V178H106L106 152H212C218 152 222.867 151.2 226.6 149.6C230.2 147.867 232 144 232 138V136H238V160C238 164.667 237.267 168.333 235.8 171C234.2 173.533 231.533 175.333 227.8 176.4C223.933 177.467 218.667 178 212 178H174V232H238V258Z" fill="black"/>
+<path id="custom-rectangle" d="M260.952 183.143C260.952 179.829 263.638 177.143 266.952 177.143H280.666C283.98 177.143 286.666 179.829 286.666 183.143V271.429H260.952V183.143Z" fill="black"/>
+<g id="custom-circle-orange" filter="url(#filter0_d_450_452)">
+<circle cx="274.19" cy="308.476" r="18" fill="url(#paint1_radial_450_452)"/>
+</g>
+<defs>
+<filter id="filter0_d_450_452" x="248.19" y="282.476" width="52" height="52" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feMorphology radius="2" operator="dilate" in="SourceAlpha" result="effect1_dropShadow_450_452"/>
+<feOffset/>
+<feGaussianBlur stdDeviation="3"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0.968627 0 0 0 0 0.678431 0 0 0 0 0.160784 0 0 0 0.75 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_450_452"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_450_452" result="shape"/>
+</filter>
+<radialGradient id="paint0_radial_450_452" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(200 200) rotate(90) scale(200)">
+<stop stop-color="#FFA1DD"/>
+<stop offset="1" stop-color="#EFE5FE"/>
+</radialGradient>
+<radialGradient id="paint1_radial_450_452" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(274.19 308.476) rotate(180) scale(18)">
+<stop offset="0.21" stop-color="#EE3C1E"/>
+<stop offset="1" stop-color="#FDA53B"/>
+</radialGradient>
+<clipPath id="clip0_450_452">
+<rect width="400" height="400" fill="white"/>
+</clipPath>
+</defs>
+</svg>
+
+    <br>
+    <button onclick="play()">Play</button>
+    <button onclick="pause()">Pause</button>
+    <button onclick="convert()">Convert</button>
+    <p id="sys-msg-path" style="display:none"></p>
+    <script id="svg-script">
+      // Select the SVG elements
+const circle = document.querySelector('#custom-circle-orange'); // **Select the orange circle**
+const rectangle = document.querySelector('#custom-rectangle'); // **Select the rectangle**
+const letterH = document.querySelector('#letter-H'); // **Select the letter H**
+
+/* Create a timeline object */
+const tl = createTimeline();
+
+// Compute necessary variables. Comment each line of code with your reasoning
+
+// Get the center position of the rectangle - we want the circle above the rectangle
+const rectCenter = getCenterPosition(rectangle); // **Get the center position of the rectangle to align the circle above it**
+// Get the size of the rectangle
+const rectSize = getSize(rectangle); // **Get the width and height of the rectangle**
+// Get the center position of the circle
+const circleCenter = getCenterPosition(circle); // **Get the current center position of the circle**
+// Get the size of the circle
+const circleSize = getSize(circle); // **Get the width and height of the circle (used for radius)**
+const circleRadius = circleSize.width / 2; // **The radius of the circle for placement calculation**
+
+// Calculate the circle's target center position: directly above the rectangle, with a small gap
+// We'll place the circle above the rectangle such that the bottom of the circle just touches the top of the rectangle
+// So targetY = rectangle top edge - circle radius - 4(extra gap)
+const gap = 4; // **Extra gap (pixels) between the circle and rectangle**
+const rectTopEdge = rectCenter.y - (rectSize.height / 2); // **Rectangle top edge in SVG coordinates**
+const targetCircleCenterY = rectTopEdge - circleRadius - gap; // **Circle center y so that it ends up just above the rectangle**
+const targetCircleCenterX = rectCenter.x; // **Circle is horizontally aligned with the rectangle center**
+// Calculate the translation required
+const translateToX = targetCircleCenterX - circleCenter.x; // **The required translation in x**
+const translateToY = targetCircleCenterY - circleCenter.y; // **The required translation in y**/
+
+// For rotating the letter H, use its center as the transform origin and rotate to 90 degrees (clockwise)
+const letterHCenter = getCenterPosition(letterH); // **Get letter H's center position for rotation origin**/
+
+// Create the animation step by step. Comment each line of code with your reasoning
+
+// Move the orange circle above the rectangular shape
+translate(tl, circle, 1, translateToX, translateToY, 0, 'power2.out'); // **Move the orange circle above the rectangular shape**
+
+// Rotate the letter H clockwise by 90 degrees, from its center
+rotate(tl, letterH, 1, 90, 0, null, null, letterHCenter.x, letterHCenter.y, 'power2.out'); // **Rotate the letter H clockwise by 90 degrees**
+    </script>
+    <script src="./vis.js"></script>
+    <script src="./convert.js"></script>
+  </body>
+</html>

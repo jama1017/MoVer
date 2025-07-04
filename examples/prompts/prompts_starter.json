@@ -1,0 +1,16 @@
+[
+    {
+        "svg_name": "four_objects.svg",
+        "animation_prompt": "The black square, in the counterclockwise direction, is rotated over a period of 1 second through an angle of 90 degrees around its bottom left corner. ",
+        "chat_id_name": "test_1222_rotate_bottom_left_001",
+        "ground_truth_program": "o_1 = iota(Object, lambda o: color(o, \"black\") and shape(o, \"square\"))\n\nexists(Motion, lambda m_1: type(m_1, \"rotate\") and direction(m_1, \"counterclockwise\") and magnitude(m_1, 90.0) and origin(m_1, [\"0%\", \"100%\"]) and duration(m_1, 1.0) and agent(m_1, o_1))\n",
+        "has_run": false
+    },
+    {
+        "svg_name": "four_objects.svg",
+        "animation_prompt": "Make the black square relocate to border the top edge of the black circle. ",
+        "chat_id_name": "test_0109_s_translate_to_top_bordering_000",
+        "ground_truth_program": "o_1 = iota(Object, lambda o: color(o, \"black\") and shape(o, \"square\"))\no_2 = iota(Object, lambda o: color(o, \"black\") and shape(o, \"circle\"))\n\nexists(Motion, lambda m_1: type(m_1, \"translate\") and post(m_1, s_top_border(o_1, o_2)) and agent(m_1, o_1))\n",
+        "has_run": false
+    }
+]

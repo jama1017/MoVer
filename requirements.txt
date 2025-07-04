@@ -1,0 +1,2 @@
+jacinle @ git+https://github.com/jama1017/Jacinle.git
+concepts @ git+https://github.com/jama1017/Concepts.git

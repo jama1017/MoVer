@@ -1,0 +1,38 @@
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g id="grid">
+    <line id="Line 0" x1="0" y1="0" x2="0" y2="400" stroke="#ACACAC" />
+    <line id="Line 00" x1="0" y1="0" x2="400" y2="0" stroke="#ACACAC" />
+    <line id="Line 00" x1="0" y1="400" x2="400" y2="400" stroke="#ACACAC" />
+    <line id="Line 3" x1="200.5" y1="0" x2="200.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 4" x1="225.5" y1="0" x2="225.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 5" x1="250.5" y1="0" x2="250.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 6" x1="275.5" y1="0" x2="275.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 7" x1="300.5" y1="0" x2="300.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 8" x1="325.5" y1="0" x2="325.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 9" x1="350.5" y1="0" x2="350.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 10" x1="375.5" y1="0" x2="375.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 11" x1="400" y1="0" x2="400" y2="400" stroke="#ACACAC" />
+    <line id="Line 12" x1="25.5" y1="0" x2="25.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 13" x1="50.5" y1="0" x2="50.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 14" x1="75.5" y1="0" x2="75.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 15" x1="100.5" y1="0" x2="100.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 16" x1="125.5" y1="0" x2="125.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 17" x1="150.5" y1="0" x2="150.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 18" x1="175.5" y1="0" x2="175.5" y2="400" stroke="#ACACAC" />
+    <line id="Line 19" x1="400" y1="200.5" x2="-4.37114e-08" y2="200.5" stroke="#ACACAC" />
+    <line id="Line 20" x1="400" y1="225.5" x2="-4.37114e-08" y2="225.5" stroke="#ACACAC" />
+    <line id="Line 21" x1="400" y1="250.5" x2="-4.37114e-08" y2="250.5" stroke="#ACACAC" />
+    <line id="Line 22" x1="400" y1="275.5" x2="-4.37114e-08" y2="275.5" stroke="#ACACAC" />
+    <line id="Line 23" x1="400" y1="300.5" x2="-4.37114e-08" y2="300.5" stroke="#ACACAC" />
+    <line id="Line 24" x1="400" y1="325.5" x2="-4.37114e-08" y2="325.5" stroke="#ACACAC" />
+    <line id="Line 25" x1="400" y1="350.5" x2="-4.37114e-08" y2="350.5" stroke="#ACACAC" />
+    <line id="Line 26" x1="400" y1="375.5" x2="-4.37114e-08" y2="375.5" stroke="#ACACAC" />
+    <line id="Line 27" x1="400" y1="25.5" x2="-4.37114e-08" y2="25.5" stroke="#ACACAC" />
+    <line id="Line 28" x1="400" y1="50.5" x2="-4.37114e-08" y2="50.5" stroke="#ACACAC" />
+    <line id="Line 29" x1="400" y1="75.5" x2="-4.37114e-08" y2="75.5" stroke="#ACACAC" />
+    <line id="Line 30" x1="400" y1="100.5" x2="-4.37114e-08" y2="100.5" stroke="#ACACAC" />
+    <line id="Line 31" x1="400" y1="125.5" x2="-4.37114e-08" y2="125.5" stroke="#ACACAC" />
+    <line id="Line 32" x1="400" y1="150.5" x2="-4.37114e-08" y2="150.5" stroke="#ACACAC" />
+    <line id="Line 33" x1="400" y1="175.5" x2="-4.37114e-08" y2="175.5" stroke="#ACACAC" />
+  </g>
+</svg>

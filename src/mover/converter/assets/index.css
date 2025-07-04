@@ -1,0 +1,19 @@
+html,
+body {
+    margin: 0;
+    padding-left: 5px;
+    font-family: 'Fira Code';
+    font-size: 0.9rem;
+}
+
+#timeline-div {
+    max-width: 100%; 
+    max-height:250px; 
+    overflow: scroll;
+    display: none;
+}
+
+svg {
+    background-image: url('./grid.svg');
+    background-repeat: "no-repeat";
+}

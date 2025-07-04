@@ -1,0 +1,40 @@
+## System
+.DS_Store
+*__pycache__/
+node_modules/
+
+## Mover
+.gitattributes
+.python-version
+mover/synthesizers/assets/sys_msg_test.md
+mover_dataset/*
+!mover_dataset/mover_prompts_atomic_12_100.json
+!mover_dataset/mover_prompts_spatial_14_100.json
+!mover_dataset/mover_prompts_temporal_12_100.json
+!mover_dataset/mover_prompts_spatial_temporal_18_100.json
+!mover_dataset/svg/
+src/mover.egg-info/
+debug.ipynb
+tests/*
+!tests/test_mover_synthesizer.py
+
+## Outputs
+example_output/
+test_output/
+
+## Examples
+examples/*
+!examples/configs/
+examples/configs/*
+!examples/configs/config_starter.yaml
+!examples/configs/config_teaser.yaml
+
+!examples/prompts/
+examples/prompts/*
+!examples/prompts/prompts_starter.json
+!examples/prompts/prompts_teaser.json
+
+!examples/svg/
+!examples/translate_right*
+!examples/two_black_squares*
+!examples/teaser_hi*
