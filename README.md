@@ -14,7 +14,7 @@ In ACM Transactions on Graphics (SIGGRAPH), 44(4), August 2025. To Appear.
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 
 
-This repository contains the official implementation of MoVer, a domain-specific language based on first-order logic that can verify if various spatio-temporal properties of motion graphics are satisfied by an animation. We provide tools to use MoVer as part of a motion graphics animation generation pipeline with verification.
+This repository contains the official implementation of MoVer, a domain-specific language based on first-order logic that can verify if various spatio-temporal properties of motion graphics are satisfied by an animation. We provide tools to use MoVer as part of an LLM-based motion graphics animation generation pipeline with verification.
 
 Check out the [project page](https://mover-dsl.github.io/) for animation and benchmark results.
 
@@ -84,7 +84,7 @@ The MoVer dataset of 5,600 prompts used in the paper can be found in `mover_data
 ### Starter Example
 Once you have installed MoVer, clone this repository to get access to the `examples/` directory, where we have prepared some examples for you to try out. By default, OpenAI models are used, so make sure you have stored your API key as environment variables (must be named `OPENAI_API_KEY`). Or you can change the config file to use other models (see `examples/configs/` for examples).
 
-First, to get things started, from the root directory of this repository, run the following command to generate some simple animations with the MoVer pipeline (using [`examples/configs/config_starter.yaml`](examples/configs/config_starter.yaml)): 
+First, to get things started, from the root directory of this repository, run the following command to generate some simple animations with the LLM-based MoVer pipeline (using [`examples/configs/config_starter.yaml`](examples/configs/config_starter.yaml)): 
 ```bash
 python -m mover.pipeline examples/configs/config_starter.yaml
 ```
@@ -124,7 +124,7 @@ Setting `has_run` to `true` will make the pipeline ignore this prompt.
 Check out the [tutorial.ipynb](tutorial.ipynb) for a walkthrough of each part of the MoVer pipeline (animation synthesis, MoVer program synthesis, and MoVer verification).
 
 ### SVG Animation
-To understand how MoVer's animation synthesizer generates SVG animations using a simple JavaScript API based on [GSAP](https://gsap.com/), check out the synthesizer's system message [`sys_msg_animation_synthesizer.md`](src/mover/synthesizers/assets/sys_msg_animation_synthesizer.md) and the API itself in [`api.js`](src/mover/converter/assets/api.js).
+To understand how MoVer's LLM-based animation synthesizer generates SVG animations using a simple JavaScript API based on [GSAP](https://gsap.com/), check out the synthesizer's system message [`sys_msg_animation_synthesizer.md`](src/mover/synthesizers/assets/sys_msg_animation_synthesizer.md) and the API itself in [`api.js`](src/mover/converter/assets/api.js).
 - To extend the API, make sure to update [`api.js`](src/mover/converter/assets/api.js) and reflect the changes in the system message. See [`tutorial.ipynb`](tutorial.ipynb) for how to pass in your own system message.
 - Each SVG animation is saved as an HTML file (see `examples/`). To properly render the HTML file, first get all the files in `src/mover/converter/assets/` and put them in the same directory as the HTML file. Then open the HTML file in your browser to see the animation in action.
 
