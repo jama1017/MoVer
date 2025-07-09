@@ -64,8 +64,7 @@ class FOLExecutor(FunctionDomainExecutor):
         vector = np.array(vector)
         direction = np.array(direction)
         scalar_projection = np.dot(direction, vector) / np.linalg.norm(direction)
-
-        return 0 if np.isclose(scalar_projection, 0) else scalar_projection > 0
+        return 0 if np.isclose(scalar_projection, 0) else scalar_projection > 0.866 ## cos(30 degrees)
     
     
     def is_on_right_side(self, x, y, xy0, xy1):
@@ -412,11 +411,11 @@ class FOLExecutor(FunctionDomainExecutor):
                                 case "T":
                                     start_x = element["translateX_acc"][start_frame]
                                     start_y = element["translateY_acc"][start_frame]
-                                    start_mag = math.sqrt(start_x ** 2 + start_y ** 2)
                                     curr_x = element["translateX_acc"][i]
                                     curr_y = element["translateY_acc"][i]
-                                    curr_mag = math.sqrt(curr_x ** 2 + curr_y ** 2)
-                                    diff = abs(curr_mag - start_mag)
+                                    displacement_x = curr_x - start_x
+                                    displacement_y = curr_y - start_y
+                                    diff = math.sqrt(displacement_x ** 2 + displacement_y ** 2)
                                     if np.isclose(diff, target_magnitude, atol=0.1):
                                         for i in range(start_frame, i):
                                             frames[i] = True

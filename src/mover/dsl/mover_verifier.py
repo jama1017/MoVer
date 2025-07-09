@@ -28,10 +28,10 @@ class MoverVerifier:
         
         ## Initialize parser with configuration
         self.parser = FOLParser(self.domain, inplace_definition=True, inplace_polymorphic_function=True)
-        self.parser.print_verbose = verbose
         
         ## Initialize executor
         self.executor = FOLExecutor(self.domain, self.parser)
+        self.executor.print_verbose = verbose
         
         ## Load default correction template
         default_path = Path(__file__).parent / 'assets' / self._correction_template_filepath
