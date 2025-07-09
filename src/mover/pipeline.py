@@ -5,14 +5,15 @@ import traceback
 from typing import Dict, Any
 from pathlib import Path
 import yaml
+from abc import ABC, abstractmethod
 from mover.synthesizers.animation_synthesizer import AnimationSynthesizer
 from mover.synthesizers.mover_synthesizer import MoverSynthesizer
 from mover.dsl.mover_verifier import MoverVerifier
 from mover.converter.mover_converter import convert_animation
 
 
-class AnimationPipeline:
-    """Main pipeline class for handling animation generation and verification."""
+class BasePipeline(ABC):
+    """Base pipeline class for handling animation generation."""
     
     def __init__(self, config: Dict[str, Any]):
         """Initialize pipeline with configuration.
@@ -49,12 +50,19 @@ class AnimationPipeline:
         if config.get('vllm_serve_port') is not None:
             params['vllm_serve_port'] = config['vllm_serve_port']
         
-        return synthesizer_class(
+        synthesizer = synthesizer_class(
             model_name=config['name'],
             provider=config['provider'],
             num_ctx=config.get('num_ctx', 128000),
             params=params
         )
+        
+        ## Set optional html_template for AnimationSynthesizer
+        if synthesizer_class.__name__ == 'AnimationSynthesizer' and config.get('html_template') is not None:
+            print(f"Setting html_template at {config['html_template']}")
+            synthesizer.set_html_template(config['html_template'])
+        
+        return synthesizer
 
 
     def _write_log(self, log_path: Path, status: str, num_iter: int, message: str = "") -> None:
@@ -80,8 +88,24 @@ class AnimationPipeline:
 
 
     def _save_chat_messages(self, chat_file_path: Path, chat_messages: list) -> None:
+        """Save chat messages to JSON file."""
         with open(chat_file_path, "w") as f:
             json.dump(chat_messages, f, indent=4)
+
+
+    @abstractmethod
+    def run_loop(self, animation_prompt_data: Dict[str, Any]) -> None:
+        """Run the main chat loop for animation generation.
+        
+        Args:
+            animation_prompt_data: Data about the animation prompt including the prompt text,
+                                 chat ID, and optional ground truth program
+        """
+        pass
+
+
+class AnimationPipeline(BasePipeline):
+    """Main pipeline class for handling animation generation and verification."""
 
 
     def run_loop(self, animation_prompt_data: Dict[str, Any]) -> None:
@@ -118,16 +142,16 @@ class AnimationPipeline:
         verification_program_path = chat_dir_path / f"{chat_id_name}.py"
         if not verification_program_path.exists():
             if "ground_truth_program" in animation_prompt_data:
-                print("\n\nRetrieving verification program")
+                print("\nRetrieving verification program")
                 verification_program = animation_prompt_data["ground_truth_program"]
                 with open(verification_program_path, "w") as f:
                     f.write(verification_program)
             else:
-                print("\n\nGenerating verification program")
+                print("\nGenerating verification program")
                 mover_model = self.config['mover_model']
                 print(f"Model:{mover_model['name']}, Provider:{mover_model['provider']}")
                 chat_history = [
-                    self.mover_synthesizer.compose_sys_msg(),
+                    self.mover_synthesizer.compose_sys_msg(mover_model.get('sys_msg')),
                     self.mover_synthesizer.compose_initial_user_prompt(animation_prompt, animation_prompt_data["svg_file_path"])
                 ]
                 _, error_msg = self.mover_synthesizer.generate(
@@ -146,8 +170,9 @@ class AnimationPipeline:
                 verification_program = f.read()
 
         ## Initialize chat
+        animation_model = self.config['animation_model']
         chat_messages = [
-            self.animation_synthesizer.compose_sys_msg(),
+            self.animation_synthesizer.compose_sys_msg(animation_model.get('sys_msg')),
             self.animation_synthesizer.compose_initial_user_prompt(animation_prompt, animation_prompt_data["svg_file_path"])
         ]
 
@@ -179,7 +204,7 @@ class AnimationPipeline:
 
             ## Handle error case
             if error_msg:
-                print(f"\n\nError extracting code block: {error_msg}")
+                print(f"\n{error_msg}")
                 print("Continuing to next iteration with help message.")
                 chat_messages.append({
                     "role": "user",

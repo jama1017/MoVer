@@ -4,7 +4,9 @@ animation_model:
   provider: openai         # Required: provider of the model. Options: openai, gemini, vertex, groq, ollama, vllm-serve
   num_ctx: null            # Optional: context window size. Only applies to locally hosted models.
   vllm_serve_port: null    # Optional: port for vLLM server. Only applies if using vLLM via `vllm serve`
-  params:                  # Optional: parameters for the model. This will likely to vary from model to model.
+  sys_msg: null            # Optional: path to a custom system prompt for the model.
+  html_template: null      # Optional: path to a custom HTML template for animation output.
+  params:                  # Optional: parameters for the model. This will likely to vary from model to model.  
     temperature: null
     top_p: null
     seed: null
@@ -15,6 +17,7 @@ mover_model:
   provider: openai         # Required: provider of the model. Options: openai, gemini, vertex, groq, ollama, vllm-serve
   num_ctx: null            # Optional: context window size. Only applies to locally hosted models.
   vllm_serve_port: null    # Optional: port for vLLM server. Only applies if using vLLM via `vllm serve`.
+  sys_msg: null            # Optional: path to a custom system prompt for the model.
   params:
     temperature: null
     top_p: null

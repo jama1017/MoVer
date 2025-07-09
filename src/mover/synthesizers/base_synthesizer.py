@@ -33,6 +33,9 @@ class BaseSynthesizer(ABC):
         """
         Read system message from file.
         """
+        if sys_msg_file_path is not None:
+            print(f"\n{self.__class__.__name__}: Reading custom sys_msg from {sys_msg_file_path}\n")
+        
         file_path = Path(sys_msg_file_path) if sys_msg_file_path is not None else Path(__file__).parent / 'assets' / self._sys_msg_filepath
         
         with open(file_path, 'r') as f:
