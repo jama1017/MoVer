@@ -271,20 +271,16 @@ class AnimationPipeline(BasePipeline):
             self._write_log(chat_dir_path / "fail.log", "failed", num_iter)
 
 
-def load_config() -> Dict[str, Any]:
-    """Load configuration from YAML file.
-    
-    Returns:
-        Dictionary containing pipeline configuration
-        
-    Raises:
-        ValueError: If required fields are missing
-    """
+def create_config_parser() -> argparse.ArgumentParser:
+    """Create argument parser with config-related arguments."""
     parser = argparse.ArgumentParser(description="Run animation pipeline with YAML configuration.")
     parser.add_argument("config", type=str, help="Path to YAML configuration file")
-    args = parser.parse_args()
-    
-    with open(args.config, 'r') as f:
+    return parser
+
+
+def load_config_from_file(config_path: str) -> Dict[str, Any]:
+    """Load and validate configuration from YAML file."""
+    with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
     ## Validate required sections
@@ -325,7 +321,10 @@ def load_config() -> Dict[str, Any]:
 
 def main() -> None:
     """Main entry point for the animation pipeline."""
-    config = load_config()
+    parser = create_config_parser()
+    args = parser.parse_args()
+    config = load_config_from_file(args.config)
+    
     pipeline = AnimationPipeline(config)
     
     paths_config = config['paths']
