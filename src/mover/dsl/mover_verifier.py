@@ -2,12 +2,15 @@ import json
 import argparse
 from pathlib import Path
 from jinja2 import Template
-from mover.dsl.obj_mot_data_class import *
 from mover.dsl.fol_domain import init_domain
 from mover.dsl.fol_parser import FOLParser
 from mover.dsl.fol_executor import FOLExecutor
 from mover.dsl.utils import clean_up_program_string
+from dataclasses import dataclass
 
+@dataclass
+class Scene(object):
+    anim_data: dict
 
 class MoverVerifier:
     """
