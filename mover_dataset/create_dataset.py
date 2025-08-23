@@ -215,7 +215,7 @@ def create_dataset():
     vocab = Vocab(VOCAB_PATH)
     prompt_generator = PromptGenerator(vocab=vocab, sampling_config=SAMPLING_CONFIG)
     
-    ## Initialize the prompt rewriter
+    ## Initialize the prompt rewriter. Uses default settings for the LLM client. To customize, see src/mover/synthesizers/base_synthesizer.py
     prompt_rewriter = PromptRewriter()
     
     ## Process all scene graphs
