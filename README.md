@@ -176,5 +176,28 @@ Jiaju Ma<br />
 hellojiajuma@gmail.com<br />
 
 
+## Citation
+If you find MoVer useful in your project, please cite our paper:
+```bibtex
+@article{ma2025mover,
+    author = {Ma, Jiaju and Agrawala, Maneesh},
+    title = {MoVer: Motion Verification for Motion Graphics Animations},
+    year = {2025},
+    issue_date = {August 2025},
+    publisher = {Association for Computing Machinery},
+    address = {New York, NY, USA},
+    volume = {44},
+    number = {4},
+    issn = {0730-0301},
+    url = {https://doi.org/10.1145/3731209},
+    doi = {10.1145/3731209},
+    journal = {ACM Trans. Graph.},
+    month = jul,
+    articleno = {33},
+    numpages = {17},
+}
+```
+
+
 ## Acknowledgments
 We thank [Yusong Wu](https://lukewys.github.io/) for his help on getting this repository ready for release. This project builds on the wonderful foundation of the [Concepts](https://github.com/concepts-ai/Concepts) framework by [Jiayuan Mao](https://jiayuanm.com/). The MoVer DSL parser and executor is based on [LEFT](https://github.com/joyhsu0504/LEFT) by [Joy Hsu](https://web.stanford.edu/~joycj/) and [Jiayuan Mao](https://jiayuanm.com/). Our SVG animation API uses the one and only [GSAP](https://gsap.com/). The MoVer converter uses the [ntc js](https://chir.ag/projects/ntc/) (Name that Color JavaScript) library for converting hex colors to names.
