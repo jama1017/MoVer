@@ -1,0 +1,1185 @@
+{
+  "motions": {
+    "translate": {
+      "VERB": [
+        {"type": "V", "word": "translate"},
+        {"type": "V", "word": "shift"},
+        {"type": "V", "word": "displace"},
+        {"type": "V", "word": "slide"},
+        {"type": "V", "word": "move"},
+        {"type": "V", "word": "relocate"},
+        {"type": "V", "word": "transfer"},
+        {"type": "V", "word": "transport"},
+        {"type": "V", "word": "convey"},
+        {"type": "V", "word": "glide"},
+        {"type": "V", "word": "reposition"},
+        {"type": "V", "word": "dislocate"},
+        {"type": "V", "word": "drift"},
+        {"type": "V", "word": "propel"},
+        {"type": "V", "word": "push"},
+        {"type": "V", "word": "migrate"},
+        {"type": "V", "word": "traverse"},
+        {"type": "V", "word": "travel"},
+        {"type": "V", "word": "advance"}
+      ],
+      "VERB_UP": [
+        {"type": "V", "word": "lift"},
+        {"type": "V", "word": "elevate"},
+        {"type": "V", "word": "raise"},
+        {"type": "V", "word": "heighten"},
+        {"type": "V", "word": "ascend"}
+      ],
+      "VERB_DOWN": [
+        {"type": "V", "word": "lower"},
+        {"type": "V", "word": "drop"},
+        {"type": "V", "word": "fall"},
+        {"type": "V", "word": "descend"},
+        {"type": "V", "word": "sink"}
+      ],
+      "NOUN": [
+        {"type": "N", "word": "shift"},
+        {"type": "N", "word": "translation"}
+      ]
+    },
+    "rotate": {
+      "VERB": [
+        {"type": "V", "word": "rotate"},
+        {"type": "V", "word": "turn"},
+        {"type": "V", "word": "tilt"},
+        {"type": "V", "word": "revolve"},
+        {"type": "V", "word": "pivot"},
+        {"type": "V", "word": "circumvolve"},
+        {"type": "V", "word": "gyrate"},
+        {"type": "V", "word": "birl"},
+        {"type": "V", "word": "twirl"},
+        {"type": "V", "word": "whirl"},
+        {"type": "V", "word": "swirl"}
+      ],
+      "VERB_CENTER": [
+        {"type": "V", "word": "spin"}
+      ],
+      "NOUN": [
+        {"type": "N", "word": "rotation"},
+        {"type": "N", "word": "spinning"}
+      ]
+    },
+    "scale": {
+      "VERB": [
+        {"type": "V", "word": "scale"},
+        {"type": "V", "word": "resize"}
+      ],
+      "VERB_UP": [
+        {"type": "V", "word": "grow"},
+        {"type": "V", "word": "enlarge"},
+        {"type": "V", "word": "expand"},
+        {"type": "V", "word": "dilate"},
+        {"type": "V", "word": "inflate"},
+        {"type": "V", "word": "amplify"},
+        {"type": "V", "word": "magnify"}
+      ],
+      "VERB_UP_SINGLE": [
+        {"type": "V", "word": "stretch"},
+        {"type": "V", "word": "extend"},
+        {"type": "V", "word": "widen"},
+        {"type": "V", "word": "broaden"},
+        {"type": "V", "word": "elongate"}
+      ],
+      "VERB_DOWN": [
+        {"type": "V", "word": "shrink"},
+        {"type": "V", "word": "contract"},
+        {"type": "V", "word": "compress"},
+        {"type": "V", "word": "taper"},
+        {"type": "V", "word": "diminish"},
+        {"type": "V", "word": "reduce"}
+      ],
+      "VERB_DOWN_SINGLE": [
+        {"type": "V", "word": "narrow"},
+        {"type": "V", "word": "constrict"}
+      ],
+      "NOUN": [
+        {"type": "N", "word": "scaling"},
+        {"type": "N", "word": "resizing"},
+        {"type": "N", "word": "expansion"},
+        {"type": "N", "word": "contraction"}
+      ]
+    }
+  },
+  "directions": {
+    "up": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "up"
+        },
+        {
+          "type": "Adv",
+          "word": "upward"
+        },
+        {
+          "type": "Adv",
+          "word": "northward"
+        },
+        {
+          "type": "Adv",
+          "word": "skyward"
+        },
+        {
+          "type": "Adv",
+          "word": "heavenward"
+        },
+        {
+          "type": "Adv",
+          "word": "uphill"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "top"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "north"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "to",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "north"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "ceiling"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "zenith"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "apex"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "adj": "elevated",
+            "noun": "position"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "adj": {
+              "word": "high",
+              "comp": "co"
+            },
+            "noun": "ground"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "adj": "upward",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "verb": {
+              "word": "rise",
+              "tense": "pr"
+            },
+            "noun": "direction"
+          }
+        }
+      ]
+    },
+    "down": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "down"
+        },
+        {
+          "type": "Adv",
+          "word": "downward"
+        },
+        {
+          "type": "Adv",
+          "word": "southward"
+        },
+        {
+          "type": "Adv",
+          "word": "earthward"
+        },
+        {
+          "type": "Adv",
+          "word": "downhill"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "south"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "to",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "south"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "bottom"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "ground"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "earth"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "nadir"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "adj": {
+              "word": "low",
+              "comp": "co"
+            },
+            "noun": "position"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "adj": {
+              "word": "low",
+              "comp": "co"
+            },
+            "noun": "ground"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "adj": "downward",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "verb": {
+              "word": "fall",
+              "tense": "pr"
+            },
+            "noun": "direction"
+          }
+        }
+      ]
+    },
+    "left": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "left"
+        },
+        {
+          "type": "Adv",
+          "word": "westward"
+        },
+        {
+          "type": "Adv",
+          "word": "leftward"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "left"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "to",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "left"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "west"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "to",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "west"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adj": "left",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adv": "leftward",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adj": "westward",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adj": "sinistral",
+            "noun": "side"
+          }
+        }
+      ]
+    },
+    "right": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "right"
+        },
+        {
+          "type": "Adv",
+          "word": "eastward"
+        },
+        {
+          "type": "Adv",
+          "word": "rightward"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "right"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "to",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "right"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "east"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "to",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "east"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "right",
+            "noun2": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adv": "rightward",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adj": "eastward",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "towards",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adj": "dextral",
+            "noun": "side"
+          }
+        }
+      ]
+    },
+    "clockwise": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "clockwise"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adv": "clockwise",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "adv": "clockwise",
+            "noun": "manner"
+          }
+        }
+      ]
+    },
+    "counterclockwise": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "counterclockwise"
+        },
+        {
+          "type": "Adv",
+          "word": "anticlockwise"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adv": "counterclockwise",
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "adv": "counterclockwise",
+            "noun": "manner"
+          }
+        }
+      ]
+    },
+    "x-axis": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "horizontally"
+        },
+        {
+          "type": "Adv",
+          "word": "sideways"
+        },
+        {
+          "type": "Adv",
+          "word": "laterally"
+        },
+        {
+          "type": "Adv",
+          "word": "widthwise"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "in",
+          "noun": "x"
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "x",
+            "noun2": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "along",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "x",
+            "noun2": "axis"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "noun": "width"
+        },
+        {
+          "type": "PP",
+          "prep": "along",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adj": "horizontal",
+            "noun": "axis"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "along",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "x",
+            "noun2": "dimension"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "along",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "width"
+          }
+        }
+      ]
+    },
+    "y-axis": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "vertically"
+        },
+        {
+          "type": "A",
+          "word": "upright"
+        },
+        {
+          "type": "Adv",
+          "word": "heightwise"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "in",
+          "noun": "y"
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "y",
+            "noun2": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "along",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "y",
+            "noun2": "axis"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "noun": "height"
+        },
+        {
+          "type": "PP",
+          "prep": "along",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "adj": "vertical",
+            "noun": "axis"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "along",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "y",
+            "noun2": "dimension"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "along",
+          "np": {
+            "type": "NP",
+            "det": "the",
+            "noun": "height"
+          }
+        }
+      ]
+    },
+    "both-x-y": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "uniformly"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "both",
+            "coord": {
+              "conj": "and",
+              "items": [
+                "x",
+                "y"
+              ]
+            },
+            "noun": "direction"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "a",
+            "noun": "uniform",
+            "noun2": "manner"
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "on",
+          "np": {
+            "type": "NP",
+            "det": "both",
+            "noun": "axis",
+            "plural": true
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "both",
+            "noun": "dimension",
+            "plural": true
+          }
+        },
+        {
+          "type": "PP",
+          "prep": "in",
+          "np": {
+            "type": "NP",
+            "det": "both",
+            "coord": {
+              "conj": "and",
+              "items": [
+                {
+                  "adj": "horizontal"
+                },
+                {
+                  "adj": "vertical"
+                }
+              ]
+            },
+            "noun": "axis",
+            "plural": true
+          }
+        }
+      ]
+    },
+    "scale_up": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "up"
+        }
+      ]
+    },
+    "scale_down": {
+      "ADV": [
+        {
+          "type": "Adv",
+          "word": "down"
+        }
+      ]
+    }
+  },
+  "magnitude": {
+    "all": {
+      "PREP": [
+        {
+          "type": "P",
+          "word": "by"
+        },
+        {
+          "type": "P",
+          "word": "for"
+        }
+      ]
+    },
+    "translate": {
+      "PREP": [
+        {
+          "type": "P",
+          "word": "across"
+        }
+      ],
+      "PHRASE": [
+        {
+          "type": "PP",
+          "text": "over a distance of"
+        },
+        {
+          "type": "PP",
+          "text": "by a distance of"
+        },
+        {
+          "type": "PP",
+          "text": "for a distance of"
+        },
+        {
+          "type": "PP",
+          "text": "by an amount of"
+        },
+        {
+          "type": "PP",
+          "text": "for an amount of"
+        },
+        {
+          "type": "PP",
+          "text": "across a distance of"
+        },
+        {
+          "type": "PP",
+          "text": "across an amount of"
+        }
+      ]
+    }
+  },
+  "temporal": {
+    "duration": {
+      "PREP": [
+        {"type": "P", "word": "over a period of"},
+        {"type": "P", "word": "for"}
+      ]
+    },
+    "before": {
+      "ADV": [
+        {"type": "Adv", "word": "after"},
+        {"type": "Adv", "word": "next"},
+        {"type": "Adv", "word": "later"},
+        {"type": "Adv", "word": "then"},
+        {"type": "Adv", "word": "afterwards"},
+        {"type": "Adv", "word": "subsequently"}
+      ],
+      "ADJ": [
+        {"type": "A", "word": "following"},
+        {"type": "A", "word": "subsequent"}
+      ]
+    },
+    "overlap": {
+      "ADV": [
+        {"type": "Adv", "word": "simultaneously"},
+        {"type": "Adv", "word": "concurrently"},
+        {"type": "C", "word": "when"},
+        {"type": "C", "word": "while"},
+        {"type": "C", "word": "as"}
+      ],
+      "PREP_PHRASE": [
+        {"type": "PP", "prep": "at", "np": {"type": "NP", "det": "the", "adj": "same", "noun": "time"}},
+        {"type": "PP", "prep": "over", "np": {"type": "NP", "det": "the", "adj": "same", "noun": "period", "prep2": "of", "noun2": "time"}}
+      ]
+    },
+    "after": {
+      "ADV": [
+        {"type": "Adv", "word": "before"},
+        {"type": "Adv", "word": "beforehand"},
+        {"type": "A", "word": "prior"},
+        {"type": "A", "word": "early", "comp": "co"},
+        {"type": "Adv", "word": "previously"},
+        {"type": "Adv", "word": "formerly"},
+        {"type": "Adv", "word": "precedently"}
+      ],
+      "PREP_PHRASE": [
+        {"type": "PP", "prep": "before", "adv": "that"}
+      ]
+    }
+  },
+  "spatial": {
+    "right": {
+      "PHRASE": [
+        {"type": "PP", "prep": "to", "np": {"type": "NP", "det": "the", "noun": "right", "prep2": "of"}},
+        {"type": "PP", "prep": "to", "np": {"type": "NP", "det": "the", "adj": "right", "noun": "side", "prep2": "of"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "pp": {"prep": "on", "det": "the", "adj": "right", "prep2": "of"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "pp": {"prep": "on", "det": "the", "adj": "right", "noun": "side", "prep2": "of"}}
+      ]
+    },
+    "left": {
+      "PHRASE": [
+        {"type": "PP", "prep": "to", "np": {"type": "NP", "det": "the", "noun": "left", "prep2": "of"}},
+        {"type": "PP", "prep": "to", "np": {"type": "NP", "det": "the", "adj": "left", "noun": "side", "prep2": "of"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "pp": {"prep": "on", "det": "the", "adj": "left", "prep2": "of"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "pp": {"prep": "on", "det": "the", "adj": "left", "noun": "side", "prep2": "of"}}
+      ]
+    },
+    "top": {
+      "PHRASE": [
+        {"type": "PP", "prep": "to", "np": {"type": "NP", "det": "the", "noun": "top", "prep2": "of"}},
+        {"type": "PP", "prep": "to", "np": {"type": "NP", "det": "the", "adj": "top", "noun": "side", "prep2": "of"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "pp": {"prep": "on", "det": "the", "adj": "top", "prep2": "of"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "pp": {"prep": "on", "det": "the", "adj": "top", "noun": "side", "prep2": "of"}}
+      ]
+    },
+    "bottom": {
+      "PHRASE": [
+        {"type": "PP", "prep": "to", "np": {"type": "NP", "det": "the", "noun": "bottom", "prep2": "of"}},
+        {"type": "PP", "prep": "to", "np": {"type": "NP", "det": "the", "adj": "bottom", "noun": "side", "prep2": "of"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "pp": {"prep": "on", "det": "the", "adj": "bottom", "prep2": "of"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "pp": {"prep": "on", "det": "the", "adj": "bottom", "noun": "side", "prep2": "of"}}
+      ]
+    },
+    "bordering": {
+      "PHRASE": [
+        {"type": "VP", "verb": {"word": "touch", "tense": "b-to"}},
+        {"type": "VP", "verb": {"word": "border", "tense": "b-to"}},
+        {"type": "VP", "verb": {"word": "be", "tense": "b-to"}, "adj": "adjacent", "prep": "to"}
+      ]
+    },
+    "intersecting": {
+      "PHRASE": [
+        {"type": "VP", "verb": {"word": "intersect", "tense": "b-to"}, "prep": "with"},
+        {"type": "VP", "verb": {"word": "coincide", "tense": "b-to"}, "prep": "with"},
+        {"type": "VP", "verb": {"word": "overlap", "tense": "b-to"}, "prep": "with"},
+        {"type": "P", "word": "to"}
+      ]
+    },
+    "default": {
+      "PREP": [
+        {"type": "P", "word": "to"}
+      ]
+    }
+  },
+  "objects": {
+    "colors": [
+      {"type": "A", "word": "black"},
+      {"type": "A", "word": "blue"},
+      {"type": "A", "word": "red"},
+      {"type": "A", "word": "green"},
+      {"type": "A", "word": "yellow"},
+      {"type": "A", "word": "purple"},
+      {"type": "A", "word": "orange"},
+      {"type": "A", "word": "pink"},
+      {"type": "A", "word": "brown"},
+      {"type": "A", "word": "white"}
+    ],
+    "shapes": [
+      {"type": "N", "word": "circle"},
+      {"type": "N", "word": "square"},
+      {"type": "N", "word": "triangle"},
+      {"type": "N", "word": "rectangle"},
+      {"type": "N", "word": "star"},
+      {"type": "N", "word": "moon"},
+      {"type": "N", "word": "fan"},
+      {"type": "N", "word": "heart"},
+      {"type": "N", "word": "diamond"},
+      {"type": "N", "word": "pentagon"}
+    ],
+    "determiners": [
+      {"type": "D", "word": "the"},
+      {"type": "D", "word": "each"},
+      {"type": "D", "word": "every"},
+      {"type": "D", "word": "all"}
+    ],
+    "origin_prepositions": {
+      "scale": [
+        {"type": "P", "word": "from"},
+        {"type": "P", "word": "about"}
+      ],
+      "default": [
+        {"type": "P", "word": "around"},
+        {"type": "P", "word": "about"}
+      ]
+    },
+    "location_nouns": [
+      {"type": "N", "word": "center"},
+      {"type": "N", "word": "corner"},
+      {"type": "N", "word": "point"}
+    ],
+    "coordinate_adjectives": [
+      {"type": "A", "word": "top"},
+      {"type": "A", "word": "bottom"},
+      {"type": "A", "word": "left"},
+      {"type": "A", "word": "right"}
+    ]
+  },
+  "lexicon_additions": {
+    "adjectives": [
+      {"word": "top", "tab": "a1"},
+      {"word": "bottom", "tab": "a1"},
+      {"word": "sinistral", "tab": "a1"},
+      {"word": "dextral", "tab": "a1"},
+      {"word": "elevated", "tab": "a1"}
+    ],
+    "verbs": [
+      {"word": "resize", "tab": "v3"},
+      {"word": "birl", "tab": "v1"},
+      {"word": "circumvolve", "tab": "v1"},
+      {"word": "reposition", "tab": "v1"}
+    ],
+    "nouns": [
+      {"word": "x", "tab": "n1"},
+      {"word": "y", "tab": "n1"},
+      {"word": "spinning", "tab": "n1"},
+      {"word": "scaling", "tab": "n1"},
+      {"word": "resizing", "tab": "n1"}
+    ],
+    "adverbs": [
+      {"word": "later", "tab": "adv1"},
+      {"word": "wider", "tab": "adv1"},
+      {"word": "narrower", "tab": "adv1"},
+      {"word": "taller", "tab": "adv1"},
+      {"word": "shorter", "tab": "adv1"},
+      {"word": "upwardly", "tab": "adv1"},
+      {"word": "upraised", "tab": "adv1"},
+      {"word": "downwardly", "tab": "adv1"},
+      {"word": "earthward", "tab": "adv1"},
+      {"word": "rightward", "tab": "adv1"},
+      {"word": "leftward", "tab": "adv1"},
+      {"word": "northward", "tab": "adv1"},
+      {"word": "widthwise", "tab": "adv1"},
+      {"word": "heightwise", "tab": "adv1"},
+      {"word": "anticlockwise", "tab": "adv1"},
+      {"word": "counterclockwise", "tab": "adv1"},
+      {"word": "precedently", "tab": "adv1"}
+    ]
+  },
+  "synonym_labels": {
+    "directions": {
+      "up": {
+        "ADV": [0,0,0,0,0,1],
+        "PHRASE": [0,0,0,1,1,1,1,1,1,1]
+      },
+      "down": {
+        "ADV": [0,0,0,0,0,1],
+        "PHRASE": [0,0,0,0,1,1,1,1,1,1]
+      },
+      "left": {
+        "ADV": [0,0],
+        "PHRASE": [0,0,0,0,1,1,1,1]
+      },
+      "right": {
+        "ADV": [0,0],
+        "PHRASE": [0,0,0,0,1,1,1,1]
+      },
+      "clockwise": {
+        "ADV": [0],
+        "PHRASE": [1,1]
+      },
+      "counterclockwise": {
+        "ADV": [0,0],
+        "PHRASE": [1,1]
+      },
+      "x-axis": {
+        "ADV": [0,0,1,1],
+        "PHRASE": [0,0,0,0,1,1,1]
+      },
+      "y-axis": {
+        "ADV": [0,1,1],
+        "PHRASE": [0,0,0,0,1,1,1]
+      },
+      "both-x-y": {
+        "ADV": [0],
+        "PHRASE": [0,1,1,1,1]
+      },
+      "scale_up": {
+        "ADV": [0]
+      },
+      "scale_down": {
+        "ADV": [0]
+      }
+    },
+    "motions": {
+      "translate": {
+        "VERB": [0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1],
+        "VERB_UP": [0,0,0,1,1],
+        "VERB_DOWN": [0,0,0,1,1],
+        "NOUN": [0,0]
+      },
+      "rotate": {
+        "VERB": [0,0,0,0,0,0,0,0,0,1,1],
+        "VERB_CENTER": [0],
+        "NOUN": [0,0]
+      },
+      "scale": {
+        "VERB": [0,0],
+        "VERB_UP": [0,0,0,0,0,1,1],
+        "VERB_UP_SINGLE": [0,0,0,1,1],
+        "VERB_DOWN": [0,0,0,1,1,1],
+        "VERB_DOWN_SINGLE": [0,1],
+        "NOUN": [0,0,0,0]
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@
 In ACM Transactions on Graphics (SIGGRAPH), 44(4), August 2025. To Appear.
 <br />
 
-![MoVer Teaser](assets/mover_teaser.png)
+![MoVer Teaser](https://github.com/jama1017/MoVer/blob/main/assets/mover_teaser.png?raw=true)
 <br />
 
 [![arXiv](https://img.shields.io/badge/arXiv-2502.13372-b31b1b.svg?style=flat-square)](https://arxiv.org/abs/2502.13372)
@@ -21,6 +21,8 @@ Check out the [project page](https://mover-dsl.github.io/) for animation and ben
 
 ## Dataset
 The MoVer dataset of 5,600 prompts used in the paper can be found in `mover_dataset/`. Each prompt contains the ground truth MoVer program and information about the prompt's syntactic construction and whether an LLM is used as part of its generation.
+
+We provide scripts to generate your own dataset of prompts with MoVer. See `mover_dataset/create_dataset.py` for details.
 
 
 ## Installation
@@ -78,7 +80,7 @@ The MoVer dataset of 5,600 prompts used in the paper can be found in `mover_data
 
 
 ## Quick Start
-![MoVer Pipeline](assets/mover_pipeline.png)
+![MoVer Pipeline](https://github.com/jama1017/MoVer/blob/main/assets/mover_pipeline.png?raw=true)
 <br />
 
 ### Starter Example
@@ -94,7 +96,7 @@ Running this command should create a directory called `example_output/prompts_st
 
 
 ### Teaser Hi Example
-<img src="assets/teaser_hi_animation.gif" width="400"/>
+<img src="https://raw.githubusercontent.com/jama1017/MoVer/refs/heads/main/assets/teaser_hi_animation.gif" width="400"/>
 
 Next, let's recreate the teaser Hi example in the paper by running the following command (pre-generated results are available in `examples/`).
 ```bash
@@ -161,16 +163,6 @@ m_4 = iota(Motion, lambda m: type(m, "translate") and direction(m, [0.0, 1.0]) a
 t_before(m_1, m_2)
 t_after(m_3, m_2)
 ```
-
-
-## Release Checklist
-- [x] MoVer DSL and verifier
-- [x] SVG animation to MoVer data format converter
-- [x] LLM-based animation synthesizer
-- [x] LLM-based MoVer synthesizer
-- [x] Scripts to run the full pipeline
-- [ ] Chat-based UI and backend for creating animations with MoVer
-- [ ] Scripts for generating animation prompts
 
 
 ## License

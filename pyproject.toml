@@ -38,6 +38,7 @@ dependencies = [
     "torch",
     "torchvision",
     "ipykernel>=6.29.5",
+    "pyrealb",
 ]
 
 [project.urls]

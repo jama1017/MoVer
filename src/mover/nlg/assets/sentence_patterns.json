@@ -1,0 +1,27 @@
+{
+  "main_clause": {
+    "present": "present_f",
+    "present_pass": "present_pass_f", 
+    "imperative": "imperative_f",
+    "imperative_ccomp": "imperative_ccomp_f",
+    "imperative_advcl": "imperative_advcl_f"
+  },
+  "concat_rules": {
+    "present": ["present"],
+    "imperative": null
+  },
+  "temporal_connectors": {
+    "overlaps": {
+      "standalone": ["at the same time", "over the same period of time", "simultaneously"],
+      "concat": ["while", "as"]
+    },
+    "before": {
+      "standalone": ["then", "next", "subsequently", "afterwards"],  
+      "concat": ["and then", "and later"]
+    },
+    "after": {
+      "standalone": ["beforehand", "before that", "formerly"],
+      "concat": ["and early", "and previously"]
+    }
+  }
+}

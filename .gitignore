@@ -13,10 +13,14 @@ mover_dataset/*
 !mover_dataset/mover_prompts_temporal_12_100.json
 !mover_dataset/mover_prompts_spatial_temporal_18_100.json
 !mover_dataset/svg/
+!mover_dataset/create_dataset.py
+!mover_dataset/dataset_scene_graphs.py
 src/mover.egg-info/
 debug.ipynb
 tests/*
 !tests/test_mover_synthesizer.py
+!tests/test_mover_fol_generator.py
+!tests/test_prompt_generation.py
 
 ## Outputs
 example_output/
@@ -35,6 +39,8 @@ examples/prompts/*
 !examples/prompts/prompts_teaser.json
 
 !examples/svg/
+examples/svg/eye.svg
+
 !examples/translate_right*
 !examples/two_black_squares*
 !examples/teaser_hi*
