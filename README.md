@@ -20,9 +20,9 @@ Check out the [project page](https://mover-dsl.github.io/) for animation and ben
 
 
 ## Dataset
-The MoVer dataset of 5,600 prompts used in the paper can be found in `mover_dataset/`. Each prompt contains the ground truth MoVer program and information about the prompt's syntactic construction and whether an LLM is used as part of its generation.
+The MoVer dataset of 5,600 prompts used in the paper can be found in [`mover_dataset/`](mover_dataset/). Each prompt contains the ground truth MoVer program and information about the prompt's syntactic construction and whether an LLM is used as part of its generation.
 
-We provide scripts to generate your own dataset of prompts with MoVer. See `mover_dataset/create_dataset.py` for details.
+We provide scripts to generate your own dataset of prompts with MoVer. See [`mover_dataset/create_dataset.py`](mover_dataset/create_dataset.py) for details.
 
 
 ## Installation
