@@ -122,7 +122,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
     return app
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
@@ -150,7 +150,10 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False) 
             print(f"{load_time:.2f} seconds")
 
             # Execute JavaScript in the page context
-            await page.evaluate(f"convert({port})")
+            await page.evaluate(f"convert({port}, {str(disable_easing).lower()})")
+            
+            if disable_easing:
+                print("Easing is disabled for all tweens.")
 
             if create_video:
                 print("Creating video...")
@@ -164,7 +167,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False) 
         await server.shutdown()
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create a video.
     
@@ -172,8 +175,9 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         html_file (str): Path to the HTML file containing the GSAP animation
         port (int, optional): Port to run the server on. Defaults to 3013.
         create_video (bool, optional): Whether to create a video. Defaults to False.
+        disable_easing (bool, optional): Set all GSAP tweens' easing to none. Defaults to False.
     """
-    asyncio.run(run_conversion(html_file, port, create_video))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing))
 
 
 def parse_args() -> argparse.Namespace:
@@ -182,13 +186,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("html_file", type=str, help="Path to the HTML file containing the JavaScript animation")
     parser.add_argument("port", type=int, help="Port to run the server on")
     parser.add_argument("--create-video", "-v", action="store_true", help="Create a video of the animation")
+    parser.add_argument("--disable-easing", "-d", action="store_true", help="Set all GSAP tweens' easing to none")
     return parser.parse_args()
 
 
 def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
-    convert_animation(args.html_file, args.port, args.create_video)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing)
 
 
 if __name__ == "__main__":

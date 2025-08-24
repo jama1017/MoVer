@@ -340,10 +340,27 @@ function compute_norm(x, y) {
 }
 
 
-async function convert(port=8001){
-    console.log("Converting...")
+function setAllTweensEaseNone(animatedElems) {
+    for (let elem of animatedElems) {
+        let tweens = tl_to_use.getTweensOf(elem);
+        for (let tween of tweens) {
+            tween.vars.ease = "none";
+            if (tween._ease) {
+                tween._ease = gsap.parseEase ? gsap.parseEase("none") : "none";
+            }
+            tween.invalidate();
+        }
+    }
+}
+
+
+async function convert(port=8001, disableEasing=false){
+    console.log("Converting...");
 
     let animatedElems = getAllAnimatedElements(svgRef);
+    if (disableEasing) {
+        setAllTweensEaseNone(animatedElems);
+    }
     let nonAnimatedElems = getNonAnimatedElements(svgRef);
     let allElems = [...animatedElems, ...nonAnimatedElems];
     let animData = getAllTransformationValues(allElems);
