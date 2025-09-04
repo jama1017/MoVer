@@ -20,7 +20,7 @@ function getNonAnimatedElements(svgRef) {
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
         let tweens = tl_to_use.getTweensOf(child)
-        if (child != undefined && tweens.length == 0) {
+        if (child != undefined && tweens.length == 0 && child.tagName.toLowerCase() !== "mask") {
             res.push(child)
         }
     }
@@ -616,7 +616,7 @@ var ntc = {
         ["069B81", "Gossamer"],
         ["06A189", "Niagara"],
         ["073A50", "Tarawera"],
-        ["080110", "Jaguar"],
+        ["080110", "Jaguar black"],
         ["081910", "Black Bean"],
         ["082567", "Deep Sapphire"],
         ["088370", "Elf Green"],
