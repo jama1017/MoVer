@@ -27,6 +27,94 @@ function getNonAnimatedElements(svgRef) {
     return res
 }
 
+function convertToKeyframes(allElems) {
+    let res = { "info": {} }
+    res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
+
+    for (let j = 0; j < allElems.length; j++) {
+        let elem = allElems[j]
+        let elemName = elem.id
+        res[elemName] = {}
+    }
+
+    // for each element, get all its tweens, and get start and end time of each tween
+    for (let i = 0; i < allElems.length; i++) {
+        let elem = allElems[i]
+        let elem_tweens = tl_to_use.getTweensOf(elem)
+
+        if (elem_tweens.length > 0) {
+            let elementData = {}
+
+            elem_tweens.forEach(function (tween, index) {
+                let tween_type = tween.data ? tween.data.type : "unknown"
+                let tween_start = tween.startTime()
+                let tween_end = tween.endTime()
+
+                elementData[tween_type] = elementData[tween_type] || {
+                    keyframes: [],
+                    acc_value: [],
+                    ctm: [],
+                    transformedPts: [],
+                    worldOrigin: [],
+                    svgOrigin: tween.vars.svgOrigin || "",
+                    transformOrigin: tween.vars.transformOrigin || ""
+                }
+
+                // Use temporary array to collect times
+                let tempTimes = elementData[tween_type].tempTimes || []
+                tempTimes.push(tween_start, tween_end)
+                elementData[tween_type].tempTimes = tempTimes
+            })
+
+            // Record data for each tween type
+            for (let tween_type in elementData) {
+                if (tween_type === "id") continue
+
+                // Remove duplicates and sort keyframe times
+                elementData[tween_type].keyframes = [...new Set(elementData[tween_type].tempTimes)].sort((a, b) => a - b)
+                delete elementData[tween_type].tempTimes // Clean up temporary array
+                
+                // For each keyframe time, seek timeline and record data
+                elementData[tween_type].keyframes.forEach(time => {
+                    tl_to_use.seek(time).pause()
+
+                    // Record CTM for all tween types
+                    let ctm = SVGMatrixToPy(elem.getCTM())
+                    elementData[tween_type].ctm.push(ctm)
+
+                    // Record transformedPts for all tween types
+                    let transformedPts = getTransformedAABB(elem)
+                    elementData[tween_type].transformedPts.push(transformedPts)
+                    
+                    // Record accumulated value based on tween type
+                    let analyzedResult = analyzeFrameMatrixAPI(elem)
+                    switch (tween_type) {
+                        case "translate":
+                            elementData[tween_type].acc_value.push([analyzedResult["translateX_acc"], analyzedResult["translateY_acc"]])
+                            break;
+                        case "rotate":
+                            elementData[tween_type].acc_value.push(analyzedResult["rotate_acc"])
+                            break;
+                        case "scale":
+                            elementData[tween_type].acc_value.push([analyzedResult["scaleX_acc"], analyzedResult["scaleY_acc"]])
+                            break;
+                        case "skew":
+                            elementData[tween_type].acc_value.push([analyzedResult["skewX_acc"], analyzedResult["skewY_acc"]])
+                            break;
+                    }
+
+                    // Record worldOrigin only if NOT translate or unknown
+                    if (tween_type !== "translate" && tween_type !== "unknown") {
+                        elementData[tween_type].worldOrigin.push(analyzedResult["wldOrigin"])
+                    }
+                })
+            }
+            res[elem.id] = elementData
+        }
+    }
+    return res
+}
+
 function getAllTransformationValues(animatedElems) {
     let animDuration = tl_to_use.duration();
     let fps = 60;
@@ -354,7 +442,7 @@ function setAllTweensEaseNone(animatedElems) {
 }
 
 
-async function convert(port=8001, disableEasing=false){
+async function convert(port=8001, disableEasing=false, saveKeyframes=false){
     console.log("Converting...");
 
     let animatedElems = getAllAnimatedElements(svgRef);
@@ -376,6 +464,17 @@ async function convert(port=8001, disableEasing=false){
         body: JSON.stringify(animData)
     })
 
+    if (saveKeyframes) {
+        let keyframesData = convertToKeyframes(allElems);
+        const response_keyframes = await fetch(`http://localhost:${port}/convert-js-to-keyframes-json`, {
+            method: 'POST',
+            headers: {
+                Accept: "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(keyframesData)
+        })
+    }
 }
 
 

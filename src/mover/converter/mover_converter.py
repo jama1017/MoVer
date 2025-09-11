@@ -77,6 +77,16 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
             json.dump(json_data, f, indent=4)
         print("SAVED TO LOCAL")
         return JSONResponse(content={"status": "success"})
+    
+    @app.post("/convert-js-to-keyframes-json")
+    async def convert_js_to_keyframes_json(request: Request):
+        """Convert JavaScript keyframes data to JSON and save it."""
+        json_data = await request.json()
+        json_file_path = Path(html_dir) / f"{base_name}_data_keyframes.json"
+        with open(json_file_path, 'w') as f:
+            json.dump(json_data, f, indent=4)
+        print("SAVED KEYFRAMES TO LOCAL")
+        return JSONResponse(content={"status": "success"})
 
     @app.post("/create-video")
     async def create_video(request: Request):
@@ -122,7 +132,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
     return app
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
@@ -150,7 +160,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             print(f"{load_time:.2f} seconds")
 
             # Execute JavaScript in the page context
-            await page.evaluate(f"convert({port}, {str(disable_easing).lower()})")
+            await page.evaluate(f"convert({port}, {str(disable_easing).lower()}, {str(save_keyframes).lower()})")
             
             if disable_easing:
                 print("Easing is disabled for all tweens.")
@@ -167,7 +177,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         await server.shutdown()
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create a video.
     
@@ -176,8 +186,9 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         port (int, optional): Port to run the server on. Defaults to 3013.
         create_video (bool, optional): Whether to create a video. Defaults to False.
         disable_easing (bool, optional): Set all GSAP tweens' easing to none. Defaults to False.
+        save_keyframes (bool, optional): Whether to save keyframes data. Defaults to False.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes))
 
 
 def parse_args() -> argparse.Namespace:
@@ -187,13 +198,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("port", type=int, help="Port to run the server on")
     parser.add_argument("--create-video", "-v", action="store_true", help="Create a video of the animation")
     parser.add_argument("--disable-easing", "-d", action="store_true", help="Set all GSAP tweens' easing to none")
+    parser.add_argument("--save-keyframes", "-k", action="store_true", help="Save keyframes data to JSON")
     return parser.parse_args()
 
 
 def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes)
 
 
 if __name__ == "__main__":
