@@ -441,6 +441,74 @@ function setAllTweensEaseNone(animatedElems) {
     }
 }
 
+// Helper function to get center position of element at a given time
+function getCenter(elem) {
+    const transformedCorners = getTransformedAABB(elem);
+
+    // Average the four corners to get the center
+    let centerX = 0;
+    let centerY = 0;
+    for (let i = 0; i < transformedCorners.length; i++) {
+        centerX += transformedCorners[i][0];
+        centerY += transformedCorners[i][1];
+    }
+    centerX /= transformedCorners.length;
+    centerY /= transformedCorners.length;
+    return { x: centerX, y: centerY };
+}
+
+// Helper function to calculate distance between two points
+function compute_euclidean_distance(p1, p2) {
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
+    const elem = document.getElementById(elementId);
+    if (!elem) {
+        return null;
+    }
+
+    const animDuration = tl_to_use.duration();
+    const fps = 2400;
+    const steps = Math.ceil(animDuration * fps);
+
+    // Initialize empty arrays for each centroid
+    let results = [];
+    for (let c = 0; c < targetCentroids.length; c++) {
+        results.push([]);
+    }
+
+    for (let i = 0; i <= steps; i++) {
+        const time = i / fps > animDuration ? animDuration : i / fps;
+        tl_to_use.seek(time).pause();
+        const center = getCenter(elem);
+
+        // Check against each target centroid
+        for (let c = 0; c < targetCentroids.length; c++) {
+            const targetCentroid = targetCentroids[c];
+            const dist = compute_euclidean_distance(center, targetCentroid);
+
+            // If we're within tolerance, add to matches array for this centroid
+            if (dist <= tolerance) {
+                const match = {
+                    time: time,
+                    error: dist,
+                    info: {
+                        "rotate_acc": gsap.getProperty(elem, "rotate"),
+                        "scale_acc": [gsap.getProperty(elem, "scaleX"), gsap.getProperty(elem, "scaleY")],
+                        "skew_acc": [gsap.getProperty(elem, "skewX"), gsap.getProperty(elem, "skewY")],
+                        "CTM": SVGMatrixToPy(elem.getCTM())
+                    }
+                };
+                results[c].push(match);
+            }
+        }
+    }
+    
+    return results;
+}
 
 async function convert(port=8001, disableEasing=false, saveKeyframes=false){
     console.log("Converting...");
