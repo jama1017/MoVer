@@ -18,14 +18,17 @@ import cairosvg
 import uvicorn
 
 
-def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: int = 60) -> None:
-    """Create a video from a list of frames using OpenCV."""
+def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: int = 60, output_format: str = "mp4") -> None:
+    """Create a video or GIF from a list of frames using OpenCV and ffmpeg."""
     if not frames:
         raise ValueError("No frames provided")
     
     height, width = frames[0].shape[:2]
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    ## Always create MP4 first
+    temp_mp4_path = Path(output_path).with_suffix('.temp.mp4')
+    out = cv2.VideoWriter(str(temp_mp4_path), fourcc, fps, (width, height))
     
     try:
         for frame in frames:
@@ -36,26 +39,37 @@ def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: in
     ## Check if ffmpeg is available
     try:
         subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        # Use ffmpeg to make the video web-compatible
-        output_path = Path(output_path)
-        temp_path = output_path.with_suffix('.temp.mp4')
-        output_path.rename(temp_path)
-        subprocess.run([
-            'ffmpeg', '-y',
-            '-i', str(temp_path),
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-crf', '23',
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            str(output_path)
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        temp_path.unlink()
+        
+        if output_format == "gif":
+            ## Convert MP4 to GIF with optimized palette
+            subprocess.run([
+                'ffmpeg', '-y',
+                '-i', str(temp_mp4_path),
+                '-vf', 'fps=24,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
+                str(output_path)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            temp_mp4_path.unlink()
+        else:
+            ## Convert to web-compatible MP4
+            subprocess.run([
+                'ffmpeg', '-y',
+                '-i', str(temp_mp4_path),
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-crf', '23',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                str(output_path)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            temp_mp4_path.unlink()
     except (subprocess.SubprocessError, FileNotFoundError):
-        print("ffmpeg not found, skipping web optimization step")
+        print("ffmpeg not found, skipping conversion step")
+        ## If ffmpeg fails, just rename the temp file
+        if temp_mp4_path.exists():
+            temp_mp4_path.rename(output_path)
 
 
-def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
+def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4") -> FastAPI:
     """Set up and configure the FastAPI application."""
     app = FastAPI()
 
@@ -111,13 +125,14 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
                 frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
                 frames.append(frame)
 
-            video_path = Path(html_dir) / f"{base_name}_animation.mp4"
-            create_video_from_frames(frames, str(video_path))
+            output_path = Path(html_dir) / f"{base_name}_animation.{output_format}"
+            create_video_from_frames(frames, str(output_path), output_format=output_format)
             
-            print(f"MoVer converter: Animation saved as video to {video_path}")
-            return JSONResponse(content={"success": True, "path": str(video_path)})
+            print(f"MoVer converter: Animation saved as {output_format.upper()} to {output_path}")
+            return JSONResponse(content={"success": True, "path": str(output_path)})
+        
         except Exception as e:
-            print(f"Error creating video: {str(e)}")
+            print(f"Error creating {output_format}: {str(e)}")
             return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
 
     @app.get("/")
@@ -132,13 +147,13 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
     return app
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, output_format: str = "mp4") -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
     base_name = html_path.stem
     
-    app = setup_fastapi_app(html_file, html_dir, base_name)
+    app = setup_fastapi_app(html_file, html_dir, base_name, output_format)
 
     # Configure uvicorn
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
@@ -166,7 +181,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
                 print("Easing is disabled for all tweens.")
 
             if create_video:
-                print("Creating video...")
+                print(f"Creating {output_format.upper()}...")
                 await page.evaluate(f"createVideo({port})")
 
             await browser.close()
@@ -177,7 +192,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         await server.shutdown()
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, output_format: str = "mp4") -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create a video.
     
@@ -187,8 +202,9 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         create_video (bool, optional): Whether to create a video. Defaults to False.
         disable_easing (bool, optional): Set all GSAP tweens' easing to none. Defaults to False.
         save_keyframes (bool, optional): Whether to save keyframes data. Defaults to False.
+        output_format (str, optional): Output format (mp4 or gif). Defaults to "mp4".
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, output_format))
 
 
 def parse_args() -> argparse.Namespace:
@@ -199,13 +215,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--create-video", "-v", action="store_true", help="Create a video of the animation")
     parser.add_argument("--disable-easing", "-d", action="store_true", help="Set all GSAP tweens' easing to none")
     parser.add_argument("--save-keyframes", "-k", action="store_true", help="Save keyframes data to JSON")
+    parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif"], help="Output format for the animation (default: mp4)")
     return parser.parse_args()
 
 
 def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.format)
 
 
 if __name__ == "__main__":
