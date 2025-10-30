@@ -162,6 +162,18 @@ function createTimeline()
 function getProperty(elementID, property) 
 
 /**
+ * This function immediately sets properties on an SVG element without animation. Use this function to initialize or instantly update element properties such as position, scale, rotation, opacity, etc. This is useful for setting up initial states before animating.
+ * @param {object} element - The SVG element whose properties should be set.
+ * @param {object} properties - An object containing property-value pairs to set on the element. Common properties include x, y, scaleX, scaleY, rotation, opacity, transformOrigin, and svgOrigin.
+ * @returns {void} - This function does not return anything.
+ * @example
+ * // Set the translate transform value of the element to [100, 200].
+ * // Here, x, y values set the translation of the element (displacement from its original position at the start of the animation).
+ * setProperty(circle, { x: 100, y: 200 });
+ */
+function setProperty(element, properties) 
+
+/**
  * This function returns the x and y coordinates of the center of an SVG element in pixels.
  * @param {object} element - The SVG element.
  * @returns {object} - The x and y coordinates of the center of the element in pixels.
