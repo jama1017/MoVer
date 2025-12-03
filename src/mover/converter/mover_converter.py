@@ -18,7 +18,7 @@ import cairosvg
 import uvicorn
 
 
-def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: int = 60, output_format: str = "mp4") -> None:
+def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: int = 30, output_format: str = "mp4") -> None:
     """Create a video or GIF from a list of frames using OpenCV and ffmpeg."""
     if not frames:
         raise ValueError("No frames provided")
@@ -45,7 +45,7 @@ def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: in
             subprocess.run([
                 'ffmpeg', '-y',
                 '-i', str(temp_mp4_path),
-                '-vf', 'fps=24,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
+                '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
                 str(output_path)
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             temp_mp4_path.unlink()
@@ -107,6 +107,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
         """Create a video from SVG frames."""
         data = await request.json()
         svg_frames = data['frames']
+        fps = data.get('fps', 30)  ## Get fps from request, default to 30
         frames = []
 
         try:
@@ -126,7 +127,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
                 frames.append(frame)
 
             output_path = Path(html_dir) / f"{base_name}_animation.{output_format}"
-            create_video_from_frames(frames, str(output_path), output_format=output_format)
+            create_video_from_frames(frames, str(output_path), fps=fps, output_format=output_format)
             
             print(f"MoVer converter: Animation saved as {output_format.upper()} to {output_path}")
             return JSONResponse(content={"success": True, "path": str(output_path)})
@@ -147,7 +148,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
     return app
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, output_format: str = "mp4") -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, output_format: str = "mp4", video_fps: int = 30) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
@@ -182,7 +183,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
 
             if create_video:
                 print(f"Creating {output_format.upper()}...")
-                await page.evaluate(f"createVideo({port})")
+                await page.evaluate(f"createVideo({port}, {video_fps})")
 
             await browser.close()
             
@@ -192,7 +193,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         await server.shutdown()
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, output_format: str = "mp4") -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, output_format: str = "mp4", video_fps: int = 30) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create a video.
     
@@ -203,8 +204,9 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         disable_easing (bool, optional): Set all GSAP tweens' easing to none. Defaults to False.
         save_keyframes (bool, optional): Whether to save keyframes data. Defaults to False.
         output_format (str, optional): Output format (mp4 or gif). Defaults to "mp4".
+        video_fps (int, optional): Frames per second for video creation. Defaults to 12.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, output_format))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, output_format, video_fps))
 
 
 def parse_args() -> argparse.Namespace:
@@ -216,13 +218,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--disable-easing", "-d", action="store_true", help="Set all GSAP tweens' easing to none")
     parser.add_argument("--save-keyframes", "-k", action="store_true", help="Save keyframes data to JSON")
     parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif"], help="Output format for the animation (default: mp4)")
+    parser.add_argument("--video-fps", type=int, default=30, help="Frames per second for video creation (default: 30)")
     return parser.parse_args()
 
 
 def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.format)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.format, args.video_fps)
 
 
 if __name__ == "__main__":

@@ -546,8 +546,8 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false){
 }
 
 
-async function createVideo(port=8001) {
-    const fps = 60;
+async function createVideo(port=8001, videoFps=30) {
+    const fps = videoFps;
     const totalFrames = Math.ceil(tl_to_use.totalDuration() * fps);
     const serializer = new XMLSerializer();
     const frames = [];
@@ -573,7 +573,8 @@ async function createVideo(port=8001) {
             },
             body: JSON.stringify({
                 "frames": frames,
-                "totalFrames": totalFrames
+                "totalFrames": totalFrames,
+                "fps": fps
             })
         });
 
