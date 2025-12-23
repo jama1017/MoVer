@@ -137,7 +137,7 @@ function getAllTransformationValues(animatedElems) {
         let elem_tweens = tl_to_use.getTweensOf(elem)
         let tweens_info = []
         elem_tweens.forEach(function (tween) {
-            let tween_type = tween.data.type
+            let tween_type = (tween.data && tween.data.type) ? tween.data.type : 'other'
             let tween_duration = tween.duration()
             let tween_start = tween.startTime() * fps
             let tween_end = tween.endTime() * fps
