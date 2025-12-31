@@ -158,7 +158,28 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
     return app
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30) -> None:
+def handle_console_message(msg, print_console: bool):
+    """Handle console messages from the browser page."""
+    if print_console:
+        msg_type = msg.type
+        location = msg.location
+        location_str = ""
+        if location:
+            url = location.get('url', 'unknown')
+            line = location.get('lineNumber', '?')
+            col = location.get('columnNumber', '?')
+            location_str = f" (at {url}:{line}:{col})"
+        print(f"    [JS Console {msg_type.upper()}] {msg.text}{location_str}")
+
+
+def handle_network_response(response, print_console: bool):
+    """Handle network responses from the browser page."""
+    if print_console:
+        if response.status >= 400:
+            print(f"    [Network Error] {response.status} {response.status_text}: {response.url}")
+
+
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
@@ -178,6 +199,10 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         async with async_playwright() as p:
             browser = await p.chromium.launch()
             page = await browser.new_page()
+            
+            # Set up console logging and network error handlers
+            page.on("console", lambda msg: handle_console_message(msg, print_console))
+            page.on("response", lambda response: handle_network_response(response, print_console))
 
             print("Page loading time: ", end="", flush=True)
             start_time = asyncio.get_event_loop().time()
@@ -203,7 +228,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         await server.shutdown()
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create a video.
     
@@ -216,8 +241,9 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         save_for_comparison (bool, optional): Whether to save rendered comparison data. Defaults to False.
         output_format (str, optional): Output format (mp4 or gif). Defaults to "mp4".
         video_fps (int, optional): Frames per second for video creation. Defaults to 12.
+        print_console (bool, optional): Whether to print console and network messages. Defaults to False.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console))
 
 
 def parse_args() -> argparse.Namespace:
@@ -231,13 +257,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-for-comparison", "-c", action="store_true", help="Save rendered comparison data to JSON")
     parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif"], help="Output format for the animation (default: mp4)")
     parser.add_argument("--video-fps", type=int, default=30, help="Frames per second for video creation (default: 30)")
+    parser.add_argument("--print-console", "-pc", action="store_true", help="Print console and network messages from the browser (default: False)")
     return parser.parse_args()
 
 
 def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console)
 
 
 if __name__ == "__main__":
