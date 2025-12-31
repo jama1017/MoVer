@@ -29,7 +29,34 @@ function getNonAnimatedElements(svgRef) {
 
 
 function getAnimationInfo(fps = 60) {
-    const animDuration = tl_to_use.duration();
+    const INFINITE_THRESHOLD = 1000000;
+    let animDuration = tl_to_use.duration();
+    console.log("Timeline raw duration:", animDuration);
+    
+    if (animDuration > INFINITE_THRESHOLD) {
+        console.warn("Detected infinite timeline (duration > 1M seconds), calculating single cycle duration...");
+        const children = tl_to_use.getChildren();
+        let maxEndTime = 0;
+        
+        children.forEach(child => {
+            const childStart = child.startTime();
+            const childDuration = child.duration();
+            const baseEnd = childStart + childDuration;
+            
+            if (isFinite(baseEnd) && baseEnd > maxEndTime) {
+                maxEndTime = baseEnd;
+            }
+        });
+        
+        if (maxEndTime > 0) {
+            animDuration = maxEndTime;
+            console.log("Calculated single cycle duration:", animDuration);
+        } else {
+            animDuration = 10;
+            console.warn("Could not calculate cycle duration, falling back to 10 seconds");
+        }
+    }
+    
     const steps = Math.ceil(animDuration * fps);
     return { animDuration, fps, steps };
 }
