@@ -27,6 +27,20 @@ function getNonAnimatedElements(svgRef) {
     return res
 }
 
+
+function getAnimationInfo(fps = 60) {
+    const animDuration = tl_to_use.duration();
+    const steps = Math.ceil(animDuration * fps);
+    return { animDuration, fps, steps };
+}
+
+
+function getSeekTime(frameIndex, fps, animDuration) {
+    const time = frameIndex / fps;
+    return time > animDuration ? animDuration : time;
+}
+
+
 function convertToKeyframes(allElems) {
     let res = { "info": {} }
     res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
@@ -116,9 +130,7 @@ function convertToKeyframes(allElems) {
 }
 
 function getAllTransformationValues(animatedElems) {
-    let animDuration = tl_to_use.duration();
-    let fps = 60;
-    let steps = Math.ceil(animDuration * fps);
+    const { animDuration, fps, steps } = getAnimationInfo(60);
 
     let res = {}
     res["info"] = { "duration": animDuration, "fps": fps, "steps": steps }
@@ -148,8 +160,7 @@ function getAllTransformationValues(animatedElems) {
     }
 
     for (let i = 0; i < steps + 1; i++) {
-        let seekTime = i / fps > animDuration ? animDuration : i / fps
-        tl_to_use.seek(seekTime).pause()
+        tl_to_use.seek(getSeekTime(i, fps, animDuration)).pause()
 
         for (let j = 0; j < animatedElems.length; j++) {
             let elem = animatedElems[j]
@@ -470,9 +481,7 @@ function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
         return null;
     }
 
-    const animDuration = tl_to_use.duration();
-    const fps = 2400;
-    const steps = Math.ceil(animDuration * fps);
+    const { animDuration, fps, steps } = getAnimationInfo(2400);
 
     // Initialize empty arrays for each centroid
     let results = [];
@@ -481,7 +490,7 @@ function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
     }
 
     for (let i = 0; i <= steps; i++) {
-        const time = i / fps > animDuration ? animDuration : i / fps;
+        const time = getSeekTime(i, fps, animDuration);
         tl_to_use.seek(time).pause();
         const center = getCenter(elem);
 
@@ -510,7 +519,45 @@ function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
     return results;
 }
 
-async function convert(port=8001, disableEasing=false, saveKeyframes=false){
+function createRenderedData(allElems) {
+    const { animDuration, fps, steps } = getAnimationInfo(60);
+
+    let res = {}
+    res["info"] = { "duration": animDuration, "fps": fps, "steps": steps }
+    res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
+
+    for (let j = 0; j < allElems.length; j++) {
+        let elem = allElems[j]
+        let elemName = elem.id
+        res[elemName] = {}
+    }
+
+    // Get comparison properties at each timestep
+    for (let i = 0; i < steps + 1; i++) {
+        tl_to_use.seek(getSeekTime(i, fps, animDuration)).pause()
+
+        for (let j = 0; j < allElems.length; j++) {
+            let elem = allElems[j]
+            let elemName = elem.id
+            let currElemData = res[elemName]
+            
+            // Spatial properties
+            currElemData["transformedAABB"] = currElemData["transformedAABB"] || [];
+            currElemData["transformedAABB"].push(getTransformedAABB(elem));
+            
+            // Visual properties at each step
+            currElemData["visual"] = currElemData["visual"] || [];
+            currElemData["visual"].push(getVisualProperties(elem));
+        }
+    }
+
+    // Reset timeline to start
+    tl_to_use.seek(0).pause();
+    
+    return res;
+}
+
+async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false){
     console.log("Converting...");
 
     let animatedElems = getAllAnimatedElements(svgRef);
@@ -543,18 +590,29 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false){
             body: JSON.stringify(keyframesData)
         })
     }
+
+    if (saveForComparison) {
+        let renderedData = createRenderedData(allElems);
+        const response_rendered = await fetch(`http://localhost:${port}/convert-js-to-rendered-json`, {
+            method: 'POST',
+            headers: {
+                Accept: "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(renderedData)
+        })
+    }
 }
 
 
 async function createVideo(port=8001, videoFps=30) {
-    const fps = videoFps;
-    const totalFrames = Math.ceil(tl_to_use.totalDuration() * fps);
+    const { animDuration, fps, steps: totalFrames } = getAnimationInfo(videoFps);
     const serializer = new XMLSerializer();
     const frames = [];
 
     // Step through each frame in the timeline
     for (let i = 0; i < totalFrames; i++) {
-        tl_to_use.seek(i / fps, false);
+        tl_to_use.seek(getSeekTime(i, fps, animDuration));
         tl_to_use.pause();
 
         // Serialize the SVG element to a string for this frame
@@ -591,6 +649,36 @@ async function createVideo(port=8001, videoFps=30) {
     // Reset timeline to start
     tl_to_use.seek(0);
     tl_to_use.pause();
+}
+
+
+// ============================================
+// Get all rendered properties for an element for comparison
+// ============================================
+
+function getVisualProperties(element) {
+    const style = window.getComputedStyle(element);
+    return {
+        fill: style.fill,
+        fillOpacity: style.fillOpacity,
+        stroke: style.stroke,
+        strokeWidth: style.strokeWidth,
+        strokeOpacity: style.strokeOpacity,
+        opacity: style.opacity,
+        visibility: style.visibility,
+        display: style.display
+    };
+}
+
+function getComparisonProperties(element) {
+    const transformedAABB = getTransformedAABB(element);
+    const visual = getVisualProperties(element);
+
+    return {
+        id: element.id,
+        transformedAABB: transformedAABB, // spatial properties
+        visual: visual // visual properties
+    };
 }
 
 
