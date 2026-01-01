@@ -153,7 +153,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
 
     # Mount the assets directory at root to allow relative path access
     assets_path = Path(__file__).parent / "assets"
-    app.mount("/", StaticFiles(directory=str(assets_path)), name="assets")
+    app.mount("/", StaticFiles(directory=str(assets_path), follow_symlink=True), name="assets")
 
     return app
 

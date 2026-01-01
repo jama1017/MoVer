@@ -16,6 +16,7 @@ mover_dataset/*
 !mover_dataset/create_dataset.py
 !mover_dataset/dataset_scene_graphs.py
 src/mover.egg-info/
+src/mover/converter/assets/library.js
 debug.ipynb
 tests/*
 !tests/test_mover_synthesizer.py
