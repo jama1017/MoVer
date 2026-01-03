@@ -632,23 +632,59 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
 }
 
 
+// Convert an SVG element to a PNG data URL using canvas. This renders the SVG in the browser with full CSS support
+async function svgToPng(svgElement) {
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(svgElement);
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    const img = new Image();
+    img.src = url;
+
+    await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = svgElement.width.baseVal.value || svgElement.viewBox.baseVal.width || 800;
+    canvas.height = svgElement.height.baseVal.value || svgElement.viewBox.baseVal.height || 600;
+
+    const ctx = canvas.getContext('2d');
+    // Fill with white background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+
+    URL.revokeObjectURL(url);
+
+    // Return base64 PNG data without the "data:image/png;base64," prefix
+    return canvas.toDataURL('image/png').split(',')[1];
+}
+
+
 async function createVideo(port=8001, videoFps=30) {
     const { animDuration, fps, steps: totalFrames } = getAnimationInfo(videoFps);
-    const serializer = new XMLSerializer();
     const frames = [];
+    const svgElement = document.querySelector("svg");
 
     // Step through each frame in the timeline
+    console.log(`Capturing ${totalFrames} frames...`);
     for (let i = 0; i < totalFrames; i++) {
         tl_to_use.seek(getSeekTime(i, fps, animDuration));
         tl_to_use.pause();
 
-        // Serialize the SVG element to a string for this frame
-        const svgString = serializer.serializeToString(document.querySelector("svg"));
-        frames.push(svgString);
+        // Convert SVG to PNG and get base64 data
+        const pngBase64 = await svgToPng(svgElement);
+        frames.push(pngBase64);
+        
+        if (i % Math.ceil(totalFrames / 10) === 0) {
+            console.log(`Captured frame ${i + 1}/${totalFrames}`);
+        }
     }
 
-    console.log("Creating video...");
-
+    console.log("Sending frames to server...");
     try {
         const response = await fetch(`http://localhost:${port}/create-video`, {
             method: 'POST',

@@ -14,7 +14,6 @@ from playwright.async_api import async_playwright
 import subprocess
 from PIL import Image
 import io
-import cairosvg
 import uvicorn
 
 
@@ -114,23 +113,25 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
 
     @app.post("/create-video")
     async def create_video(request: Request):
-        """Create a video from SVG frames."""
+        """Create a video from base64 PNG frames (SVG rendered client-side)."""
+        import base64
+        
         data = await request.json()
-        svg_frames = data['frames']
-        fps = data.get('fps', 30)  ## Get fps from request, default to 30
+        png_frames = data['frames']  # Base64-encoded PNG data
+        fps = data.get('fps', 30)
         frames = []
 
         try:
-            for svg_data in svg_frames:
-                # Convert SVG to PNG using cairosvg
-                png_data = cairosvg.svg2png(bytestring=svg_data.encode('utf-8'))
+            for i, png_base64 in enumerate(png_frames):
+                # Decode base64 PNG data
+                png_data = base64.b64decode(png_base64)
                 
-                # Open PNG with PIL and ensure white background
+                # Open PNG with PIL
                 img = Image.open(io.BytesIO(png_data))
-                if img.mode in ('RGBA', 'LA'):
-                    background = Image.new('RGB', img.size, (255, 255, 255))
-                    background.paste(img, mask=img.split()[-1])
-                    img = background
+                
+                # Ensure RGB mode (canvas already has white background)
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
                 
                 # Convert to numpy array for OpenCV
                 frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
