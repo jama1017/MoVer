@@ -729,7 +729,8 @@ function getVisualProperties(element) {
         strokeOpacity: style.strokeOpacity,
         opacity: style.opacity,
         visibility: style.visibility,
-        display: style.display
+        display: style.display,
+        filter: style.filter
     };
 }
 
