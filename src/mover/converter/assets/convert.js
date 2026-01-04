@@ -30,10 +30,10 @@ function getNonAnimatedElements(svgRef) {
 
 function getAnimationInfo(fps = 60) {
     const INFINITE_THRESHOLD = 1000000;
-    let animDuration = tl_to_use.duration();
-    console.log("Timeline raw duration:", animDuration);
+    let animDuration = tl_to_use.totalDuration();
+    console.log("Timeline total duration:", animDuration);
     
-    if (animDuration > INFINITE_THRESHOLD) {
+    if (!isFinite(animDuration) || animDuration > INFINITE_THRESHOLD) {
         console.warn("Detected infinite timeline (duration > 1M seconds), calculating single cycle duration...");
         const children = tl_to_use.getChildren();
         let maxEndTime = 0;
@@ -587,6 +587,10 @@ function createRenderedData(allElems) {
 async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false){
     console.log("Converting...");
 
+    // This ensures dynamically added tweens are present before we gather animation data
+    tl_to_use.totalProgress(1);
+    tl_to_use.totalProgress(0);
+
     let animatedElems = getAllAnimatedElements(svgRef);
     if (disableEasing) {
         setAllTweensEaseNone(animatedElems);
@@ -670,8 +674,8 @@ async function createVideo(port=8001, videoFps=30) {
     const svgElement = document.querySelector("svg");
 
     // Step through each frame in the timeline
-    console.log(`Capturing ${totalFrames} frames...`);
-    for (let i = 0; i < totalFrames; i++) {
+    console.log(`Capturing ${totalFrames + 1} frames...`);
+    for (let i = 0; i <= totalFrames; i++) {
         tl_to_use.seek(getSeekTime(i, fps, animDuration));
         tl_to_use.pause();
 
