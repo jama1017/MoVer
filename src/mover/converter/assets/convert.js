@@ -117,7 +117,7 @@ function convertToKeyframes(allElems) {
                 
                 // For each keyframe time, seek timeline and record data
                 elementData[tween_type].keyframes.forEach(time => {
-                    tl_to_use.seek(time).pause()
+                    tl_to_use.seek(time, false).pause()
 
                     // Record CTM for all tween types
                     let ctm = SVGMatrixToPy(elem.getCTM())
@@ -187,7 +187,7 @@ function getAllTransformationValues(animatedElems) {
     }
 
     for (let i = 0; i < steps + 1; i++) {
-        tl_to_use.seek(getSeekTime(i, fps, animDuration)).pause()
+        tl_to_use.seek(getSeekTime(i, fps, animDuration), false).pause()
 
         for (let j = 0; j < animatedElems.length; j++) {
             let elem = animatedElems[j]
@@ -518,7 +518,7 @@ function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
 
     for (let i = 0; i <= steps; i++) {
         const time = getSeekTime(i, fps, animDuration);
-        tl_to_use.seek(time).pause();
+        tl_to_use.seek(time, false).pause();
         const center = getCenter(elem);
 
         // Check against each target centroid
@@ -579,7 +579,7 @@ function createRenderedData(allElems) {
     }
 
     // Reset timeline to start
-    tl_to_use.seek(0).pause();
+    tl_to_use.seek(0, false).pause();
     
     return res;
 }
@@ -676,7 +676,7 @@ async function createVideo(port=8001, videoFps=30) {
     // Step through each frame in the timeline
     console.log(`Capturing ${totalFrames + 1} frames...`);
     for (let i = 0; i <= totalFrames; i++) {
-        tl_to_use.seek(getSeekTime(i, fps, animDuration));
+        tl_to_use.seek(getSeekTime(i, fps, animDuration), false);
         tl_to_use.pause();
 
         // Convert SVG to PNG and get base64 data
@@ -714,7 +714,7 @@ async function createVideo(port=8001, videoFps=30) {
     }
 
     // Reset timeline to start
-    tl_to_use.seek(0);
+    tl_to_use.seek(0, false);
     tl_to_use.pause();
 }
 
