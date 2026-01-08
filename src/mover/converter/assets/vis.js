@@ -8,7 +8,7 @@ if (typeof tl !== 'undefined') {
 
 tl_to_use.seek(0)
 tl_to_use.pause()
-tl_to_use.eventCallback("onUpdate", showFrame);
+// tl_to_use.eventCallback("onUpdate", showFrame);
 
 // Use duration() instead of totalDuration() to handle infinite repeats (repeat(-1))
 const totalSteps = Math.ceil(tl_to_use.duration() * 60);

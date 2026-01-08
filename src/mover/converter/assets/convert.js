@@ -1,13 +1,29 @@
 var svgRef = document.getElementsByTagName('svg')[0]
-tl_to_use.eventCallback("onComplete", convert);
+
+// Non-graphical SVG elements that don't have geometry methods (getCTM, getBBox, etc.)
+const NON_GRAPHICAL_TAGS = new Set([
+    'style', 'defs', 'script', 'title', 'desc', 'metadata',
+    'lineargradient', 'radialgradient', 'pattern', 'clippath',
+    'filter', 'fegaussianblur', 'feblend', 'fecolormatrix', 'fecomponenttransfer',
+    'fecomposite', 'feconvolvematrix', 'fediffuselighting', 'fedisplacementmap',
+    'feflood', 'feimage', 'femerge', 'femorphology', 'feoffset', 'fespecularlighting',
+    'fetile', 'feturbulence', 'symbol', 'marker', 'stop'
+]);
+
+function isGraphicalElement(element) {
+    if (!element || !element.tagName) return false;
+    return !NON_GRAPHICAL_TAGS.has(element.tagName.toLowerCase());
+}
 
 function getAllAnimatedElements(svgRef) {
     let svgChildren = svgRef.children
     let res = []
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
+        if (!isGraphicalElement(child)) continue;
         let tweens = tl_to_use.getTweensOf(child)
         if (child != undefined && tweens.length > 0) {
+            console.log(`Animated element found: <${child.tagName}> id="${child.id}" (${tweens.length} tween${tweens.length > 1 ? 's' : ''})`)
             res.push(child)
         }
     }
@@ -19,8 +35,10 @@ function getNonAnimatedElements(svgRef) {
     let res = []
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
+        if (!isGraphicalElement(child)) continue;
         let tweens = tl_to_use.getTweensOf(child)
         if (child != undefined && tweens.length == 0 && child.tagName.toLowerCase() !== "mask") {
+            console.log(`Non-animated element found: <${child.tagName}> id="${child.id}"`)
             res.push(child)
         }
     }
