@@ -1,5 +1,6 @@
 from tree_sitter import Language, Parser
 from tree_sitter_language_pack import get_parser, SupportedLanguage
+from mover.config import LIBRARY_CONFIG
 from pathlib import Path
 import argparse
 
@@ -98,22 +99,10 @@ def compose(library: str = "default"):
     root_dir = Path(__file__).parent.parent.parent
     api_path = root_dir / "mover" / "converter" / "assets" / "api.js"
     
-    ## Library-specific configuration
-    library_config = {
-        "default": {
-            "template": "template_animation.md",
-            "output": "sys_msg_animation_synthesizer.md"
-        },
-        "gsap": {
-            "template": "template_animation_allow_gsap.md",
-            "output": "sys_msg_animation_synthesizer_with_implementation.md"
-        }
-    }
+    if library not in LIBRARY_CONFIG:
+        raise ValueError(f"Unsupported animation library: {library}. Supported: {list(LIBRARY_CONFIG.keys())}")
     
-    if library not in library_config:
-        raise ValueError(f"Unsupported animation library: {library}. Supported: {list(library_config.keys())}")
-    
-    config = library_config[library]
+    config = LIBRARY_CONFIG[library]
     sys_msg_path = root_dir / "mover" / "composers" / "assets" / config["template"]
     
     ## Parse API code and combine with system message

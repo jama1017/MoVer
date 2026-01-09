@@ -3,7 +3,7 @@ import jinja2
 from typing import List, Dict, Any, Optional, Tuple
 from mover.synthesizers.base_synthesizer import BaseSynthesizer
 from mover.synthesizers.utils import extract_code_block, get_svg_code
-
+from mover.config import LIBRARY_CONFIG
 
 class AnimationSynthesizer(BaseSynthesizer):
     ## System message file path for animation synthesizer
@@ -11,7 +11,7 @@ class AnimationSynthesizer(BaseSynthesizer):
     ## HTML template file path for animation synthesizer
     _html_template_filepath = Path(__file__).parent / 'assets' / 'template.html'
 
-    def __init__(self, model_name: str = "gpt-4.1", provider: str = "openai", num_ctx: int = 128000, params: Dict[str, Any] = {}):
+    def __init__(self, model_name: str = "gpt-4.1", provider: str = "openai", num_ctx: int = 128000, params: Dict[str, Any] = {}, library_type: str = "default"):
         """
         Initialize the Animation Synthesizer.
         
@@ -26,6 +26,11 @@ class AnimationSynthesizer(BaseSynthesizer):
         ## Load HTML template
         with open(self._html_template_filepath, 'r') as f:
             self.html_template = f.read()
+            
+        ## Set sys msg filepath based on library type
+        if library_type not in LIBRARY_CONFIG:
+            raise ValueError(f"Unsupported animation library: {library_type}. Supported: {list(LIBRARY_CONFIG.keys())}")
+        self._sys_msg_filepath = LIBRARY_CONFIG[library_type]["output"]
             
             
     def set_html_template(self, html_template_path: str) -> None:
