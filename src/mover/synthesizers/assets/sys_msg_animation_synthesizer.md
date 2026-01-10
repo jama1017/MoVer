@@ -66,13 +66,13 @@ Motion Vocabulary
 ```javascript
 /**
  * This function adds a tween to the timeline to translates an SVG element.
- * @param {object} timeline - The timeline object to add the translation tween to.
- * @param {object} element - The SVG element to be translated.
- * @param {number} duration - The duration of the tween in seconds
+ * @param {object{"GSAP_TIMELINE_OBJECT"}} timeline - The timeline object to add the translation tween to.
+ * @param {object{"SVG_ELEMENT"}} element - The SVG element to be translated.
+ * @param {number{0-}} duration - The duration of the tween in seconds
  * @param {number} toX - The amount of pixels to translate the element along the x-axis from its current position. This value is a relative offset from the element's current x value.
  * @param {number} toY - The amount of pixels to translate the element along the y-axis from its current position. This value is a relative offset from the element's current y value.
  * @param {number} startTime - The absolute time in the global timeline at which the tween should start.
- * @param {string} [easing='none'] - The easing function to use for the tween. The default value is linear easing. The easing functions are: "power2", "power4", "expo", and "sine". Each function should be appended with ".in", ".out", or ".inOut" to specify how the rate of change should change over time. ".in" means a slow start and speeds up later. ".out" means a fast start and slows down at the end. ".inOut" means both a slow start and a slow ending. For example, "power2.in" specifies a quadratic easing in. Another easing function is "slow(0.1, 0.4)", which slows down in the middle and speeds up at both the beginning and the end. The first number (0-1) is the porportion of the tween that is slowed down, and the second number (0-1) is the easing strength.
+ * @param {string{"GSAP_EASING_FUNCTIONS"}} [easing='none'] - The GSAP easing function to use for the tween. The default value is linear easing. The core easing functions are: "power1", "power2", "power3", "power4", "back", "bounce", "circ", "elastic", "expo", "sine", and "steps". Each function should be appended with ".in", ".out", or ".inOut" to specify how the rate of change should change over time. ".in" means a slow start and speeds up later. ".out" means a fast start and slows down at the end. ".inOut" means both a slow start and a slow ending. For example, "power2.in" specifies a quadratic easing in. Besides these core easing functions, there are also special easing functions such as "rough", "slow", and "expoScale", and generator functions such CustomEase, CustomBounce, and CustomWiggle.
  * @returns {void} - This function does not return anything.
  * @example
  * // Translates the square element 25 pixels to the right and 25 pixels down over 1 second.
@@ -91,9 +91,9 @@ function translate(timeline, element, duration, toX, toY, startTime, easing = 'n
 
 /**
  * This function adds a tween to the timeline to scale an SVG element.
- * @param {object} timeline - The timeline object to add the translation tween to.
- * @param {object} element - The SVG element to be scaled.
- * @param {number} duration - The duration of the tween in seconds
+ * @param {object{"GSAP_TIMELINE_OBJECT"}} timeline - The timeline object to add the translation tween to.
+ * @param {object{"SVG_ELEMENT"}} element - The SVG element to be scaled.
+ * @param {number{0-}} duration - The duration of the tween in seconds
  * @param {number} scaleX - The scale factor to apply to the element along the x-axis. This value is absolute and not relative to the element's current scaleX factor.
  * @param {number} scaleY - The scale factor to apply to the element along the y-axis. This value is absolute and not relative to the element's current scaleY factor.
  * @param {number} startTime - Same as the startTime parameter for the translate function.
@@ -101,7 +101,7 @@ function translate(timeline, element, duration, toX, toY, startTime, easing = 'n
  * @param {string} [elementTransformOriginY='50%'] - The y-axis transform origin from which the transformation is applied. The origin is in the element's coordinate space and is relative to the top left corner of the element. The default value is 50%, which means 50% of the element's height from the top edge of the element (vertical center of the element).
  * @param {string} [absoluteTransformOriginX=null] - Similar to elementTransformOriginX, but the origin is in the absolute coordinate space of the SVG document and should be specified as a pixel value. Specify only elementTransformOriginX and elementTransformOriginY or absoluteTransformOriginX and absoluteTransformOriginY, but not both. When both are specified, elementTransformOriginX and elementTransformOriginY take precedence.
  * @param {string} [absoluteTransformOriginY=null] - Similar to elementTransformOriginY, but the origin is in the absolute coordinate space of the SVG document and should be specified as a pixel value. Specify only elementTransformOriginX and elementTransformOriginY or absoluteTransformOriginX and absoluteTransformOriginY, but not both. When both are specified, elementTransformOriginX and elementTransformOriginY take precedence.
- * @param {string} [easing='none'] - Same as the easing parameter for the translate function.
+ * @param {string{"GSAP_EASING_FUNCTIONS"}} [easing='none'] - Same as the easing parameter for the translate function.
  * @returns {void} - This function does not return anything.
  * @example
  * // Scale the square element to double its size over 1 second from its center.
@@ -124,16 +124,16 @@ function scale(timeline, element, duration, scaleX, scaleY, startTime, elementTr
 
 /**
  * This function adds a tween to the timeline to rotate an SVG element.
- * @param {object} timeline - The timeline object to add the translation tween to.
- * @param {object} element - The SVG element to be rotated.
- * @param {number} duration - The duration of the tween in seconds
+ * @param {object{"GSAP_TIMELINE_OBJECT"}} timeline - The timeline object to add the translation tween to.
+ * @param {object{"SVG_ELEMENT"}} element - The SVG element to be rotated.
+ * @param {number{0-}} duration - The duration of the tween in seconds
  * @param {number} angle - The rotation angle in degree. This value is absolute and not relative to the element's current rotation angle.
  * @param {number} startTime - Same as the startTime parameter for the translate function.
  * @param {string} [elementTransformOriginX='50%'] - Same as the elementTransformOriginX parameter for the scale function.
  * @param {string} [elementTransformOriginY='50%'] - Same as the elementTransformOriginY parameter for the scale function.
  * @param {string} [absoluteTransformOriginX=null] - Same as the absoluteTransformOriginX parameter for the scale function.
  * @param {string} [absoluteTransformOriginY=null] - Same as the absoluteTransformOriginY parameter for the scale function.
- * @param {string} [easing='none'] - Same as the easing parameter for the translate function.
+ * @param {string{"GSAP_EASING_FUNCTIONS"}} [easing='none'] - Same as the easing parameter for the translate function.
  * @returns {void} - This function does not return anything.
  * @example
  * // Rotate the square element by 45 degrees (clockwise) from its center over 1 second.
@@ -163,7 +163,7 @@ function getProperty(elementID, property)
 
 /**
  * This function immediately sets properties on an SVG element without animation. Use this function to initialize or instantly update element properties such as position, scale, rotation, opacity, etc. This is useful for setting up initial states before animating.
- * @param {object} element - The SVG element whose properties should be set.
+ * @param {object{"SVG_ELEMENT"}} element - The SVG element whose properties should be set.
  * @param {object} properties - An object containing property-value pairs to set on the element. Common properties include x, y, scaleX, scaleY, rotation, opacity, transformOrigin, and svgOrigin.
  * @returns {void} - This function does not return anything.
  * @example
@@ -175,7 +175,7 @@ function setProperty(element, properties)
 
 /**
  * This function returns the x and y coordinates of the center of an SVG element in pixels.
- * @param {object} element - The SVG element.
+ * @param {object{"SVG_ELEMENT"}} element - The SVG element.
  * @returns {object} - The x and y coordinates of the center of the element in pixels.
  * @example
  * // Get the y coordinate of the center of the square element.
@@ -185,7 +185,7 @@ function getCenterPosition(element)
 
 /**
  * This function returns the width and height of an SVG element in pixels.
- * @param {object} element - The SVG element.
+ * @param {object{"SVG_ELEMENT"}} element - The SVG element.
  * @returns {object} - The width and height the element in pixels.
  * @example
  * // Get the width of the square element.

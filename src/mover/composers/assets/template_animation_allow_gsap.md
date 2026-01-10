@@ -36,34 +36,6 @@ The output JavaScript code should follow the following template:
 ```
 
 ### Animation API Documentation
-Motion Vocabulary
-    Motion type: "translate"
-        Example verbs:
-            "translate", "shift", "displace", "slide", "relocate", "transfer", "transport", 
-            "convey", "glide", "reposition", "dislocate", "drift", "propel", "push", "migrate", "traverse", "travel", "advance"
-        Example verbs with upward direction:
-            "lift", "elevate", "raise", "heighten", "ascend"
-        Example verbs with downward direction:
-            "lower", "drop", "fall", "descend", "sink"
-
-    Motion type: "rotate"
-        Example verbs:
-            "rotate", "turn", "tilt", "revolve", "pivot", "circumvolve", "gyrate", "birl", "twirl", "whirl", "swirl"
-        Example verbs with center:
-            "spin"
-
-    Motion type: "scale"
-        Example verbs:
-            "scale", "resize"
-        Example verbs with upward direction:
-            "grow", "enlarge", "expand", "dilate", "inflate", "amplify", "magnify"
-        Example verbs with upward direction and single axis:
-            "stretch", "extend", "widen", "broaden", "elongate"
-        Example verbs with downward direction:
-            "shrink", "contract", "compress", "taper", "diminish", "reduce"
-        Example verbs with downward direction and single axis:
-            "narrow", "constrict"
-
 ```javascript
 {{api-code}}
 ```
