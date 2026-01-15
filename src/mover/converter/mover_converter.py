@@ -207,7 +207,11 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
 
             print("Page loading time: ", end="", flush=True)
             start_time = asyncio.get_event_loop().time()
-            await page.goto(f"http://127.0.0.1:{port}")
+            ## Use networkidle to wait for all resources (including web fonts) to load
+            await page.goto(f"http://127.0.0.1:{port}", wait_until="networkidle")
+            ## Explicitly wait for all fonts to be ready
+            await page.evaluate("document.fonts.ready")
+            print("Fonts loaded")
             load_time = asyncio.get_event_loop().time() - start_time
             print(f"{load_time:.2f} seconds")
 

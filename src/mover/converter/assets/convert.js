@@ -66,7 +66,7 @@ function getAnimationInfo(fps = 60) {
             }
         });
         
-        if (maxEndTime > 0) {
+        if (maxEndTime > 0 && maxEndTime < INFINITE_THRESHOLD) {
             animDuration = maxEndTime;
             console.log("Calculated single cycle duration:", animDuration);
         } else {
