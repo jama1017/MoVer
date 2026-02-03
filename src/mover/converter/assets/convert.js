@@ -21,6 +21,7 @@ function getAllAnimatedElements(svgRef) {
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
         if (!isGraphicalElement(child)) continue;
+        if (child.id && child.id.includes("ignore")) continue;
         let tweens = tl_to_use.getTweensOf(child)
         if (child != undefined && tweens.length > 0) {
             console.log(`Animated element found: <${child.tagName}> id="${child.id}" (${tweens.length} tween${tweens.length > 1 ? 's' : ''})`)
@@ -36,6 +37,7 @@ function getNonAnimatedElements(svgRef) {
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
         if (!isGraphicalElement(child)) continue;
+        if (child.id && child.id.includes("ignore")) continue;
         let tweens = tl_to_use.getTweensOf(child)
         if (child != undefined && tweens.length == 0 && child.tagName.toLowerCase() !== "mask") {
             console.log(`Non-animated element found: <${child.tagName}> id="${child.id}"`)
