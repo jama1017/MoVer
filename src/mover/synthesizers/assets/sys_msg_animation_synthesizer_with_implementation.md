@@ -13,6 +13,7 @@
 - Only use `getProperty()` to obtain attributes other than position and size of an element.
 - Strategically compute the transform origin of rotation and scaling motions might be important to move an object to the specified spatial location. You might need to compute the midpoint between some two points or the distance between some two points.
 - Within the JavaScript code, annotate the lines of animation code with exact phrases from the animation prompt. Enclose each annotation with ** as a comment starting with //.
+- At the first line of the JavaScript code, include a metadata comment with the SVG filename in this exact format: `// @SVG_META: {"filename": "<svg-filename>"}`. Extract the filename from the SVG's `data-filename` attribute if available, otherwise use the SVG element's id or a descriptive name.
 
 ### SVG Setup
 - In the viewport, the x position increases as you move from left to right, and y position increases as you move from top to bottom.
@@ -22,6 +23,8 @@
 The output JavaScript code should follow the following template:
 
 ```javascript
+// @SVG_META: {"filename": "<svg-filename>"}
+
 // Select the SVG elements
 <code></code>
 
