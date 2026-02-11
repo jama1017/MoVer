@@ -88,6 +88,24 @@ function getSeekTime(frameIndex, fps, animDuration) {
 }
 
 
+// Get SVG dimensions for viewport sizing
+function getSvgDimensions() {
+    const svgElement = document.querySelector("svg");
+    const width = svgElement.width.baseVal.value || svgElement.viewBox.baseVal.width || 800;
+    const height = svgElement.height.baseVal.value || svgElement.viewBox.baseVal.height || 600;
+    return { width, height };
+}
+
+
+// Seek timeline to a specific frame index. Returns true if successful.
+function seekToFrame(frameIndex, fps, animDuration) {
+    const seekTime = getSeekTime(frameIndex, fps, animDuration);
+    tl_to_use.seek(seekTime, false);
+    tl_to_use.pause();
+    return true;
+}
+
+
 function convertToKeyframes(allElems) {
     let res = { "info": {} }
     res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
@@ -302,17 +320,17 @@ function compute_diff_acc(anim_data) {
         }
 
         // compute diff
-        allowed_keys = ['translateX_acc', 'translateY_acc', 'rotate_acc', 'scaleX_acc', 'scaleY_acc', 'skewX_acc', 'skewY_acc']
-        element = anim_data[element_id]
+        let allowed_keys = ['translateX_acc', 'translateY_acc', 'rotate_acc', 'scaleX_acc', 'scaleY_acc', 'skewX_acc', 'skewY_acc']
+        let element = anim_data[element_id]
         for (var key of allowed_keys) {
             // console.log(key)
-            diff_id = key.replace('_acc', '')
-            curr_acc_values = element[key]
+            let diff_id = key.replace('_acc', '')
+            let curr_acc_values = element[key]
             element[diff_id] = [curr_acc_values[0]]
             for (let i = 1; i < curr_acc_values.length; i++) {
-                prev_acc = curr_acc_values[i-1]
-                curr_acc = curr_acc_values[i]
-                curr_diff = curr_acc - prev_acc
+                let prev_acc = curr_acc_values[i-1]
+                let curr_acc = curr_acc_values[i]
+                let curr_diff = curr_acc - prev_acc
                 if (key.includes('scale')) {
                     curr_diff = curr_acc / prev_acc
                 }
@@ -323,7 +341,7 @@ function compute_diff_acc(anim_data) {
         // transform types
         element["transformTypes"] = []
         for (let i = 0; i < steps + 1; i++) {
-            transformation_types = ""
+            let transformation_types = ""
             if (element["translateX"][i] != 0 || element["translateY"][i] != 0) {
                 transformation_types += "T"
             }
@@ -656,87 +674,7 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
 }
 
 
-// Convert an SVG element to a PNG data URL using canvas. This renders the SVG in the browser with full CSS support
-async function svgToPng(svgElement) {
-    const serializer = new XMLSerializer();
-    const svgString = serializer.serializeToString(svgElement);
-    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
 
-    const img = new Image();
-    img.src = url;
-
-    await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-    });
-
-    const canvas = document.createElement('canvas');
-    canvas.width = svgElement.width.baseVal.value || svgElement.viewBox.baseVal.width || 800;
-    canvas.height = svgElement.height.baseVal.value || svgElement.viewBox.baseVal.height || 600;
-
-    const ctx = canvas.getContext('2d');
-    // Fill with white background
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0);
-
-    URL.revokeObjectURL(url);
-
-    // Return base64 PNG data without the "data:image/png;base64," prefix
-    return canvas.toDataURL('image/png').split(',')[1];
-}
-
-
-async function createVideo(port=8001, videoFps=30) {
-    const { animDuration, fps, steps: totalFrames } = getAnimationInfo(videoFps);
-    const frames = [];
-    const svgElement = document.querySelector("svg");
-
-    // Step through each frame in the timeline
-    console.log(`Capturing ${totalFrames + 1} frames...`);
-    for (let i = 0; i <= totalFrames; i++) {
-        tl_to_use.seek(getSeekTime(i, fps, animDuration), false);
-        tl_to_use.pause();
-
-        // Convert SVG to PNG and get base64 data
-        const pngBase64 = await svgToPng(svgElement);
-        frames.push(pngBase64);
-        
-        if (i % Math.ceil(totalFrames / 10) === 0) {
-            console.log(`Captured frame ${i + 1}/${totalFrames}`);
-        }
-    }
-
-    console.log("Sending frames to server...");
-    try {
-        const response = await fetch(`http://localhost:${port}/create-video`, {
-            method: 'POST',
-            headers: {
-                Accept: "application/json, text/plain, */*",
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                "frames": frames,
-                "totalFrames": totalFrames,
-                "fps": fps
-            })
-        });
-
-        const result = await response.json();
-        if (result.success) {
-            console.log(`Video saved successfully to: ${result.path}`);
-        } else {
-            console.error('Failed to create video:', result.error);
-        }
-    } catch (error) {
-        console.error('Error during video creation:', error);
-    }
-
-    // Reset timeline to start
-    tl_to_use.seek(0, false);
-    tl_to_use.pause();
-}
 
 
 // ============================================

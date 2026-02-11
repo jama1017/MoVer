@@ -2,7 +2,9 @@ import os
 import json
 import asyncio
 import argparse
-from typing import List
+import tempfile
+import shutil
+from typing import List, Optional
 from pathlib import Path
 import cv2
 import numpy as np
@@ -10,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, Page
 import subprocess
 from PIL import Image
 import io
@@ -68,6 +70,105 @@ def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: in
             temp_mp4_path.rename(output_path)
 
 
+async def capture_frames_server_driven(
+    page: Page,
+    output_path: str,
+    fps: int = 30,
+    output_format: str = "mp4",
+) -> None:
+    """
+    Server-driven frame capture: Python controls the timeline and screenshots.
+    Frames are streamed to disk to avoid holding all in memory.
+    """
+    # 1. Get animation info from the page
+    anim_info = await page.evaluate("() => getAnimationInfo()")
+    duration = anim_info["animDuration"]
+    total_frames = anim_info["steps"]
+
+    print(f"Capturing {total_frames + 1} frames at {fps} FPS (duration: {duration}s)")
+
+    # 2. Hide GSDevTools if present (it overlays on top of the SVG)
+    await page.evaluate("""() => {
+        const devtools = document.querySelector('#GSDevTools');
+        if (devtools) devtools.style.display = 'none';
+        // Also hide any GSDevTools container elements
+        document.querySelectorAll('[class*="gs-dev-tools"]').forEach(el => el.style.display = 'none');
+    }""")
+
+    # 3. Locate the SVG element once
+    svg_element = page.locator("svg").first
+    await svg_element.wait_for(state="visible")
+
+    # 3. Stream frames to a temp directory
+    temp_dir = tempfile.mkdtemp(prefix="mover_frames_")
+
+    try:
+        for frame_index in range(total_frames + 1):
+            # Seek the timeline from Python using the existing JS helper
+            await page.evaluate(f"() => seekToFrame({frame_index}, {fps}, {duration})")
+
+            # Wait for repaint
+            await page.evaluate(
+                "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+            )
+
+            # Screenshot the SVG element directly to disk
+            frame_path = Path(temp_dir) / f"frame_{frame_index:06d}.png"
+            await svg_element.screenshot(path=str(frame_path), type="png")
+
+            # Progress reporting
+            if (frame_index + 1) % max(1, (total_frames + 1) // 10) == 0 or frame_index == total_frames:
+                print(f"  Captured frame {frame_index + 1}/{total_frames + 1}")
+
+        # 4. Encode video using FFmpeg directly from image sequence
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+
+            if output_format == "gif":
+                subprocess.run([
+                    'ffmpeg', '-y',
+                    '-framerate', str(fps),
+                    '-i', str(Path(temp_dir) / 'frame_%06d.png'),
+                    '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
+                    str(output_path)
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            else:
+                subprocess.run([
+                    'ffmpeg', '-y',
+                    '-framerate', str(fps),
+                    '-i', str(Path(temp_dir) / 'frame_%06d.png'),
+                    '-c:v', 'libx264',
+                    '-preset', 'ultrafast',
+                    '-crf', '23',
+                    '-pix_fmt', 'yuv420p',
+                    '-movflags', '+faststart',
+                    str(output_path)
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+            print(f"Video saved to {output_path}")
+
+        except (subprocess.SubprocessError, FileNotFoundError):
+            print("ffmpeg not found, falling back to OpenCV encoding")
+            # Fallback: read frames back and use OpenCV
+            frames = []
+            for frame_index in range(total_frames + 1):
+                frame_path = Path(temp_dir) / f"frame_{frame_index:06d}.png"
+                img = Image.open(frame_path)
+                if img.mode != 'RGB':
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    if img.mode == 'RGBA':
+                        background.paste(img, mask=img.split()[3])
+                    else:
+                        background.paste(img)
+                    img = background
+                frames.append(cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
+            create_video_from_frames(frames, output_path, fps, output_format)
+            print(f"Video saved to {output_path} (OpenCV fallback)")
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4") -> FastAPI:
     """Set up and configure the FastAPI application."""
     app = FastAPI()
@@ -110,42 +211,6 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
             json.dump(json_data, f, indent=4)
         print("SAVED RENDERED DATA TO LOCAL")
         return JSONResponse(content={"status": "success"})
-
-    @app.post("/create-video")
-    async def create_video(request: Request):
-        """Create a video from base64 PNG frames (SVG rendered client-side)."""
-        import base64
-        
-        data = await request.json()
-        png_frames = data['frames']  # Base64-encoded PNG data
-        fps = data.get('fps', 30)
-        frames = []
-
-        try:
-            for i, png_base64 in enumerate(png_frames):
-                # Decode base64 PNG data
-                png_data = base64.b64decode(png_base64)
-                
-                # Open PNG with PIL
-                img = Image.open(io.BytesIO(png_data))
-                
-                # Ensure RGB mode (canvas already has white background)
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
-                # Convert to numpy array for OpenCV
-                frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-                frames.append(frame)
-
-            output_path = Path(html_dir) / f"{base_name}_animation.{output_format}"
-            create_video_from_frames(frames, str(output_path), fps=fps, output_format=output_format)
-            
-            print(f"MoVer converter: Animation saved as {output_format.upper()} to {output_path}")
-            return JSONResponse(content={"success": True, "path": str(output_path)})
-        
-        except Exception as e:
-            print(f"Error creating {output_format}: {str(e)}")
-            return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
 
     @app.get("/")
     async def serve_html():
@@ -221,9 +286,11 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             if disable_easing:
                 print("Easing is disabled for all tweens.")
 
+            # Server-driven video creation — no HTTP round-trips per frame
             if create_video:
                 print(f"Creating {output_format.upper()}...")
-                await page.evaluate(f"createVideo({port}, {video_fps})")
+                output_path = str(Path(html_dir) / f"{base_name}_animation.{output_format}")
+                await capture_frames_server_driven(page, output_path, video_fps, output_format)
 
             await browser.close()
             
@@ -245,7 +312,7 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         save_keyframes (bool, optional): Whether to save keyframes data. Defaults to False.
         save_for_comparison (bool, optional): Whether to save rendered comparison data. Defaults to False.
         output_format (str, optional): Output format (mp4 or gif). Defaults to "mp4".
-        video_fps (int, optional): Frames per second for video creation. Defaults to 12.
+        video_fps (int, optional): Frames per second for video creation. Defaults to 30.
         print_console (bool, optional): Whether to print console and network messages. Defaults to False.
     """
     asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console))
