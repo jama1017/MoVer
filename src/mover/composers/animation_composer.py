@@ -20,11 +20,12 @@ def has_previous_comment(node, source_code: str) -> tuple[bool, str]:
     return False, ""
 
 
-def parse_api_code(api_file_path: str, include_implementation: bool = False) -> str:
+def parse_api_code(api_file_path: str, include_implementation: bool = False, included_functions: set[str] | None = None) -> str:
     """
     Parse JavaScript API code to extract function declarations and their JSDoc comments.
     Returns the formatted string containing comments and function declarations.
     If include_implementation is True, returns full function implementation including body.
+    If included_functions is provided, only those functions are kept (overrides the default exclusion list).
     """
     # Read the API file
     with open(api_file_path, 'rb') as f:
@@ -34,7 +35,7 @@ def parse_api_code(api_file_path: str, include_implementation: bool = False) -> 
     parser = get_parser("javascript")
     tree = parser.parse(source_code)
     
-    # Functions to exclude
+    # Functions to exclude (ignored when included_functions is provided)
     excluded_functions = {
         "getAABB",
         "computeTranslationForAlignTo",
@@ -54,7 +55,10 @@ def parse_api_code(api_file_path: str, include_implementation: bool = False) -> 
             continue
             
         func_name = extract_text(source_code, name_node)
-        if func_name in excluded_functions:
+        if included_functions is not None:
+            if func_name not in included_functions:
+                continue
+        elif func_name in excluded_functions:
             continue
         
         # Check for JSDoc comment

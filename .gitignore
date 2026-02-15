@@ -45,3 +45,4 @@ examples/svg/eye.svg
 !examples/translate_right*
 !examples/two_black_squares*
 !examples/teaser_hi*
+.cursor/*
