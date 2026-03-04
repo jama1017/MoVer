@@ -1,5 +1,16 @@
 var svgRef = document.getElementsByTagName('svg')[0]
 
+// Interprets the getter recipe from the property registry.
+function getSpatialValue(elem, propSpec) {
+    if (propSpec.getter === "transformedPts") return getTransformedAABB(elem);
+    if (propSpec.getter === "gsap") {
+        let val = gsap.getProperty(elem, propSpec.gsapProp);
+        return propSpec.negate ? -val : val;
+    }
+    console.warn(`Unknown getter type: ${propSpec.getter}`);
+    return null;
+}
+
 // Non-graphical SVG elements that don't have geometry methods (getCTM, getBBox, etc.)
 const NON_GRAPHICAL_TAGS = new Set([
     'style', 'defs', 'script', 'title', 'desc', 'metadata',
@@ -584,7 +595,20 @@ function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
     return results;
 }
 
-function createRenderedData(allElems) {
+function createRenderedData(allElems, registry, propertyConfig = null) {
+    // registry = property_registry.json (auto-loaded by Python)
+    // propertyConfig = { spatial: ["transformedPts", "rotate", ...],
+    //                    visual: ["fill", "opacity", ...],
+    //                    svgAttributes: ["d", "r"] }
+    // null propertyConfig → use registry.defaults
+
+    const config = propertyConfig || {
+        spatial: registry.defaults.spatial,
+        visual: registry.defaults.visual,
+        svgAttributes: []
+    };
+    const visualProps = config.visual || [];
+
     const { animDuration, fps, steps } = getAnimationInfo(60);
 
     let res = {}
@@ -605,16 +629,37 @@ function createRenderedData(allElems) {
             let elem = allElems[j]
             let elemName = elem.id
             let currElemData = res[elemName]
-            
-            // Spatial properties
-            currElemData["transformedAABB"] = currElemData["transformedAABB"] || [];
-            currElemData["transformedAABB"].push(getTransformedAABB(elem));
-            
-            // Visual properties at each step
-            currElemData["visual"] = currElemData["visual"] || [];
-            currElemData["visual"].push(getVisualProperties(elem));
+
+            // Spatial properties — use getter recipe from registry
+            for (const prop of (config.spatial || [])) {
+                const propSpec = registry.spatial[prop];
+                if (!propSpec) {
+                    console.warn(`Unknown spatial property: ${prop}`);
+                    continue;
+                }
+                currElemData[prop] = currElemData[prop] || [];
+                currElemData[prop].push(getSpatialValue(elem, propSpec));
+            }
+
+            // Visual (CSS computed style) — each property gets its own array
+            if (visualProps.length > 0) {
+                const style = window.getComputedStyle(elem);
+                for (const prop of visualProps) {
+                    currElemData[prop] = currElemData[prop] || [];
+                    currElemData[prop].push(style[prop]);
+                }
+            }
+
+            // SVG attributes — generic, no per-property logic
+            for (const attr of (config.svgAttributes || [])) {
+                currElemData[attr] = currElemData[attr] || [];
+                currElemData[attr].push(elem.getAttribute(attr));
+            }
         }
     }
+
+    // Store config in info for downstream consumers
+    res["info"]["propertyConfig"] = config;
 
     // Reset timeline to start
     tl_to_use.seek(0, false).pause();
@@ -622,7 +667,7 @@ function createRenderedData(allElems) {
     return res;
 }
 
-async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false){
+async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false, registry=null, comparisonPropertyConfig=null){
     console.log("Converting...");
 
     // This ensures dynamically added tweens are present before we gather animation data
@@ -661,7 +706,7 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
     }
 
     if (saveForComparison) {
-        let renderedData = createRenderedData(allElems);
+        let renderedData = createRenderedData(allElems, registry, comparisonPropertyConfig);
         const response_rendered = await fetch(`http://localhost:${port}/convert-js-to-rendered-json`, {
             method: 'POST',
             headers: {
@@ -677,35 +722,6 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
 
 
 
-// ============================================
-// Get all rendered properties for an element for comparison
-// ============================================
-
-function getVisualProperties(element) {
-    const style = window.getComputedStyle(element);
-    return {
-        fill: style.fill,
-        fillOpacity: style.fillOpacity,
-        stroke: style.stroke,
-        strokeWidth: style.strokeWidth,
-        strokeOpacity: style.strokeOpacity,
-        opacity: style.opacity,
-        visibility: style.visibility,
-        display: style.display,
-        filter: style.filter
-    };
-}
-
-function getComparisonProperties(element) {
-    const transformedAABB = getTransformedAABB(element);
-    const visual = getVisualProperties(element);
-
-    return {
-        id: element.id,
-        transformedAABB: transformedAABB, // spatial properties
-        visual: visual // visual properties
-    };
-}
 
 
 /* Jiaju Ma: The following code is modified from the ntc.js library. It is used to convert colors to names.

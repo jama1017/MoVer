@@ -169,8 +169,9 @@ async def capture_frames_server_driven(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4") -> FastAPI:
+def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4", output_dir: str | None = None) -> FastAPI:
     """Set up and configure the FastAPI application."""
+    out_dir = output_dir or html_dir
     app = FastAPI()
 
     # Add CORS middleware
@@ -186,7 +187,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
     async def convert_js_to_json(request: Request):
         """Convert JavaScript data to JSON and save it."""
         json_data = await request.json()
-        json_file_path = Path(html_dir) / f"{base_name}_data.json"
+        json_file_path = Path(out_dir) / f"{base_name}_data.json"
         with open(json_file_path, 'w') as f:
             json.dump(json_data, f, indent=4)
         print("SAVED TO LOCAL")
@@ -196,7 +197,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
     async def convert_js_to_keyframes_json(request: Request):
         """Convert JavaScript keyframes data to JSON and save it."""
         json_data = await request.json()
-        json_file_path = Path(html_dir) / f"{base_name}_data_keyframes.json"
+        json_file_path = Path(out_dir) / f"{base_name}_data_keyframes.json"
         with open(json_file_path, 'w') as f:
             json.dump(json_data, f, indent=4)
         print("SAVED KEYFRAMES TO LOCAL")
@@ -206,7 +207,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
     async def convert_js_to_rendered_json(request: Request):
         """Convert JavaScript rendered comparison data to JSON and save it."""
         json_data = await request.json()
-        json_file_path = Path(html_dir) / f"{base_name}_data_rendered.json"
+        json_file_path = Path(out_dir) / f"{base_name}_data_rendered.json"
         with open(json_file_path, 'w') as f:
             json.dump(json_data, f, indent=4)
         print("SAVED RENDERED DATA TO LOCAL")
@@ -245,13 +246,17 @@ def handle_network_response(response, print_console: bool):
             print(f"    [Network Error] {response.status} {response.status_text}: {response.url}")
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
     base_name = html_path.stem
     
-    app = setup_fastapi_app(html_file, html_dir, base_name, output_format)
+    ## Ensure output_dir exists if specified
+    if output_dir:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    app = setup_fastapi_app(html_file, html_dir, base_name, output_format, output_dir)
 
     # Configure uvicorn
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
@@ -281,7 +286,17 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             print(f"{load_time:.2f} seconds")
 
             # Execute JavaScript in the page context
-            await page.evaluate(f"convert({port}, {str(disable_easing).lower()}, {str(save_keyframes).lower()}, {str(save_for_comparison).lower()})")
+            registry_json = "null"
+            if save_for_comparison:
+                registry_path = Path(__file__).parent / "assets" / "property_registry.json"
+                with open(registry_path) as f:
+                    registry_json = f.read()
+            props_json = json.dumps(comparison_properties) if comparison_properties else "null"
+            await page.evaluate(
+                f"convert({port}, {str(disable_easing).lower()}, "
+                f"{str(save_keyframes).lower()}, {str(save_for_comparison).lower()}, "
+                f"{registry_json}, {props_json})"
+            )
             
             if disable_easing:
                 print("Easing is disabled for all tweens.")
@@ -289,7 +304,8 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             # Server-driven video creation — no HTTP round-trips per frame
             if create_video:
                 print(f"Creating {output_format.upper()}...")
-                output_path = str(Path(html_dir) / f"{base_name}_animation.{output_format}")
+                video_out_dir = output_dir or html_dir
+                output_path = str(Path(video_out_dir) / f"{base_name}_animation.{output_format}")
                 await capture_frames_server_driven(page, output_path, video_fps, output_format)
 
             await browser.close()
@@ -300,7 +316,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         await server.shutdown()
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create a video.
     
@@ -314,8 +330,12 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         output_format (str, optional): Output format (mp4 or gif). Defaults to "mp4".
         video_fps (int, optional): Frames per second for video creation. Defaults to 30.
         print_console (bool, optional): Whether to print console and network messages. Defaults to False.
+        comparison_properties (dict, optional): Property config for comparison recording.
+            Dict with keys 'spatial', 'visual', 'svgAttributes' mapping to lists of
+            property names. None uses hardcoded defaults in convert.js.
+        output_dir (str, optional): Directory to write output files to. None writes next to the HTML.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir))
 
 
 def parse_args() -> argparse.Namespace:
@@ -330,13 +350,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif"], help="Output format for the animation (default: mp4)")
     parser.add_argument("--video-fps", type=int, default=30, help="Frames per second for video creation (default: 30)")
     parser.add_argument("--print-console", "-pc", action="store_true", help="Print console and network messages from the browser (default: False)")
+    parser.add_argument("--comparison-properties", type=str, default=None, help="JSON string of property config for comparison recording, e.g. '{\"spatial\": [\"transformedPts\", \"rotate\"], \"visual\": [\"opacity\"]}'")
+    parser.add_argument("--output-dir", type=str, default=None, help="Directory to write output files to (default: same directory as the HTML file)")
     return parser.parse_args()
 
 
 def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console)
+    comp_props = json.loads(args.comparison_properties) if args.comparison_properties else None
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir)
 
 
 if __name__ == "__main__":

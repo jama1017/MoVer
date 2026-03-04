@@ -1,0 +1,51 @@
+{
+  "spatial": {
+    "transformedPts": { "comparison": "iou", "threshold": 0.80, "getter": "transformedPts" },
+    "translateX":      { "comparison": "numeric", "tolerance": 1.0, "getter": "gsap", "gsapProp": "x" },
+    "translateY":      { "comparison": "numeric", "tolerance": 1.0, "getter": "gsap", "gsapProp": "y", "negate": true },
+    "rotate":          { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "rotation" },
+    "scaleX":          { "comparison": "numeric", "tolerance": 0.01, "getter": "gsap", "gsapProp": "scaleX" },
+    "scaleY":          { "comparison": "numeric", "tolerance": 0.01, "getter": "gsap", "gsapProp": "scaleY" },
+    "skewX":           { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "skewX" },
+    "skewY":           { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "skewY" },
+    "transformOrigin": { "comparison": "equality", "getter": "gsap", "gsapProp": "transformOrigin" }
+  },
+  "visual": {
+    "fill":             { "comparison": "equality" },
+    "fillOpacity":      { "comparison": "equality" },
+    "stroke":           { "comparison": "equality" },
+    "strokeWidth":      { "comparison": "equality" },
+    "strokeOpacity":    { "comparison": "equality" },
+    "opacity":          { "comparison": "equality" },
+    "visibility":       { "comparison": "equality" },
+    "display":          { "comparison": "equality" },
+    "filter":           { "comparison": "equality" },
+    "strokeDasharray":  { "comparison": "equality" },
+    "strokeDashoffset": { "comparison": "equality" },
+    "clipPath":         { "comparison": "equality" },
+    "mask":             { "comparison": "equality" },
+    "color":            { "comparison": "equality" },
+    "fontSize":         { "comparison": "equality" },
+    "letterSpacing":    { "comparison": "equality" },
+    "textDecoration":   { "comparison": "equality" },
+    "mixBlendMode":     { "comparison": "equality" }
+  },
+  "svgAttributes": {
+    "d":      { "comparison": "equality" },
+    "r":      { "comparison": "equality" },
+    "cx":     { "comparison": "equality" },
+    "cy":     { "comparison": "equality" },
+    "rx":     { "comparison": "equality" },
+    "ry":     { "comparison": "equality" },
+    "x":      { "comparison": "equality" },
+    "y":      { "comparison": "equality" },
+    "width":  { "comparison": "equality" },
+    "height": { "comparison": "equality" },
+    "points": { "comparison": "equality" }
+  },
+  "defaults": {
+    "spatial": ["transformedPts"],
+    "visual": ["fill", "fillOpacity", "stroke", "strokeWidth", "strokeOpacity",
+               "opacity", "visibility", "display", "filter"]
+  }
+}
