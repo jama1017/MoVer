@@ -1,14 +1,13 @@
 {
   "spatial": {
-    "transformedPts": { "comparison": "iou", "threshold": 0.80, "getter": "transformedPts" },
+    "transformedPts": { "comparison": "iou", "threshold": 0.80, "getter": "transformedPts", "autoExtract": false },
     "translateX":      { "comparison": "numeric", "tolerance": 1.0, "getter": "gsap", "gsapProp": "x" },
     "translateY":      { "comparison": "numeric", "tolerance": 1.0, "getter": "gsap", "gsapProp": "y", "negate": true },
     "rotate":          { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "rotation" },
     "scaleX":          { "comparison": "numeric", "tolerance": 0.01, "getter": "gsap", "gsapProp": "scaleX" },
     "scaleY":          { "comparison": "numeric", "tolerance": 0.01, "getter": "gsap", "gsapProp": "scaleY" },
     "skewX":           { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "skewX" },
-    "skewY":           { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "skewY" },
-    "transformOrigin": { "comparison": "equality", "getter": "gsap", "gsapProp": "transformOrigin" }
+    "skewY":           { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "skewY" }
   },
   "visual": {
     "fill":             { "comparison": "equality" },
@@ -16,7 +15,7 @@
     "stroke":           { "comparison": "equality" },
     "strokeWidth":      { "comparison": "equality" },
     "strokeOpacity":    { "comparison": "equality" },
-    "opacity":          { "comparison": "equality" },
+    "opacity":          { "comparison": "numeric", "tolerance": 0.01 },
     "visibility":       { "comparison": "equality" },
     "display":          { "comparison": "equality" },
     "filter":           { "comparison": "equality" },
@@ -47,5 +46,12 @@
     "spatial": ["transformedPts"],
     "visual": ["fill", "fillOpacity", "stroke", "strokeWidth", "strokeOpacity",
                "opacity", "visibility", "display", "filter"]
+  },
+  "gsapAliases": {
+    "x": ["translateX"],
+    "y": ["translateY"],
+    "rotation": ["rotate"],
+    "scale": ["scaleX", "scaleY"],
+    "autoAlpha": ["opacity", "visibility"]
   }
 }

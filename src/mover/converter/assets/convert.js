@@ -595,6 +595,59 @@ function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
     return results;
 }
 
+function extractAnimatedProperties(svgRef, registry) {
+    const aliases = registry.gsapAliases || {};
+    const knownProps = new Set([
+        ...Object.keys(registry.spatial),
+        ...Object.keys(registry.visual),
+        ...Object.keys(registry.svgAttributes),
+        ...Object.keys(aliases),
+    ]);
+    const spatialNames = new Set(Object.keys(registry.spatial));
+
+    tl_to_use.totalProgress(1);
+    tl_to_use.totalProgress(0);
+
+    const result = {};
+    const svgChildren = svgRef.children;
+    for (let i = 0; i < svgChildren.length; i++) {
+        const child = svgChildren[i];
+        if (!isGraphicalElement(child)) continue;
+        if (child.id && child.id.includes("ignore")) continue;
+
+        const tweens = tl_to_use.getTweensOf(child);
+        if (tweens.length === 0) continue;
+
+        const regNames = new Set();
+        let hasSpatial = false;
+        for (const tween of tweens) {
+            for (const key of Object.keys(tween.vars)) {
+                if (key === "attr") {
+                    for (const attrKey of Object.keys(tween.vars.attr)) {
+                        if (knownProps.has(attrKey)) regNames.add(attrKey);
+                    }
+                } else if (knownProps.has(key)) {
+                    const resolved = aliases[key] || [key];
+                    resolved.forEach(n => {
+                        regNames.add(n);
+                        if (spatialNames.has(n)) hasSpatial = true;
+                    });
+                }
+            }
+        }
+        // Only auto-add properties that don't have autoExtract: false
+        if (hasSpatial) {
+            const tpSpec = registry.spatial && registry.spatial["transformedPts"];
+            if (!tpSpec || tpSpec.autoExtract !== false) {
+                regNames.add("transformedPts");
+            }
+        }
+        result[child.id] = [...regNames];
+    }
+    return result;
+}
+
+
 function createRenderedData(allElems, registry, propertyConfig = null) {
     // registry = property_registry.json (auto-loaded by Python)
     // propertyConfig = { spatial: ["transformedPts", "rotate", ...],
@@ -667,7 +720,7 @@ function createRenderedData(allElems, registry, propertyConfig = null) {
     return res;
 }
 
-async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false, registry=null, comparisonPropertyConfig=null){
+async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false, registry=null, comparisonPropertyConfig=null, saveAnimatedProperties=false){
     console.log("Converting...");
 
     // This ensures dynamically added tweens are present before we gather animation data
@@ -714,6 +767,15 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
                 "Content-Type": "application/json",
             },
             body: JSON.stringify(renderedData)
+        })
+    }
+
+    if (saveAnimatedProperties && registry) {
+        let animatedProps = extractAnimatedProperties(svgRef, registry);
+        await fetch(`http://localhost:${port}/save-animated-properties`, {
+            method: 'POST',
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(animatedProps)
         })
     }
 }

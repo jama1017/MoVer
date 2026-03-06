@@ -169,7 +169,7 @@ async def capture_frames_server_driven(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4", output_dir: str | None = None) -> FastAPI:
+def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4", output_dir: str | None = None, save_animated_properties: bool = False) -> FastAPI:
     """Set up and configure the FastAPI application."""
     out_dir = output_dir or html_dir
     app = FastAPI()
@@ -213,6 +213,16 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
         print("SAVED RENDERED DATA TO LOCAL")
         return JSONResponse(content={"status": "success"})
 
+    @app.post("/save-animated-properties")
+    async def save_animated_properties_endpoint(request: Request):
+        """Save extracted animated properties (registry names per element) to JSON."""
+        json_data = await request.json()
+        json_file_path = Path(out_dir) / f"{base_name}_properties.json"
+        with open(json_file_path, 'w') as f:
+            json.dump(json_data, f, indent=4)
+        print(f"SAVED ANIMATED PROPERTIES TO {json_file_path}")
+        return JSONResponse(content={"status": "success"})
+
     @app.get("/")
     async def serve_html():
         """Serve the HTML file."""
@@ -246,7 +256,7 @@ def handle_network_response(response, print_console: bool):
             print(f"    [Network Error] {response.status} {response.status_text}: {response.url}")
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
@@ -256,7 +266,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
     if output_dir:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
     
-    app = setup_fastapi_app(html_file, html_dir, base_name, output_format, output_dir)
+    app = setup_fastapi_app(html_file, html_dir, base_name, output_format, output_dir, save_animated_properties)
 
     # Configure uvicorn
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
@@ -285,9 +295,9 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             load_time = asyncio.get_event_loop().time() - start_time
             print(f"{load_time:.2f} seconds")
 
-            # Execute JavaScript in the page context
+            ## Execute JavaScript in the page context
             registry_json = "null"
-            if save_for_comparison:
+            if save_for_comparison or save_animated_properties:
                 registry_path = Path(__file__).parent / "assets" / "property_registry.json"
                 with open(registry_path) as f:
                     registry_json = f.read()
@@ -295,7 +305,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             await page.evaluate(
                 f"convert({port}, {str(disable_easing).lower()}, "
                 f"{str(save_keyframes).lower()}, {str(save_for_comparison).lower()}, "
-                f"{registry_json}, {props_json})"
+                f"{registry_json}, {props_json}, {str(save_animated_properties).lower()})"
             )
             
             if disable_easing:
@@ -316,7 +326,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         await server.shutdown()
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create a video.
     
@@ -334,8 +344,10 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
             Dict with keys 'spatial', 'visual', 'svgAttributes' mapping to lists of
             property names. None uses hardcoded defaults in convert.js.
         output_dir (str, optional): Directory to write output files to. None writes next to the HTML.
+        save_animated_properties (bool, optional): Extract and save animated property names
+            (registry names per element) to _properties.json. Defaults to False.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir, save_animated_properties))
 
 
 def parse_args() -> argparse.Namespace:
@@ -352,6 +364,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--print-console", "-pc", action="store_true", help="Print console and network messages from the browser (default: False)")
     parser.add_argument("--comparison-properties", type=str, default=None, help="JSON string of property config for comparison recording, e.g. '{\"spatial\": [\"transformedPts\", \"rotate\"], \"visual\": [\"opacity\"]}'")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory to write output files to (default: same directory as the HTML file)")
+    parser.add_argument("--save-animated-properties", "-ap", action="store_true", help="Extract and save animated property names (registry names per element) to _properties.json")
     return parser.parse_args()
 
 
@@ -359,7 +372,7 @@ def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
     comp_props = json.loads(args.comparison_properties) if args.comparison_properties else None
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir, args.save_animated_properties)
 
 
 if __name__ == "__main__":
