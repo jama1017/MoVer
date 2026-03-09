@@ -1,6 +1,6 @@
 {
   "spatial": {
-    "transformedPts": { "comparison": "iou", "threshold": 0.80, "getter": "transformedPts", "autoExtract": false },
+    "transformedPts": { "comparison": "iou", "threshold": 0.80, "getter": "transformedPts", "autoExtract": true },
     "translateX":      { "comparison": "numeric", "tolerance": 1.0, "getter": "gsap", "gsapProp": "x" },
     "translateY":      { "comparison": "numeric", "tolerance": 1.0, "getter": "gsap", "gsapProp": "y", "negate": true },
     "rotate":          { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "rotation" },
