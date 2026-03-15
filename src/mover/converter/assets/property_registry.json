@@ -52,6 +52,7 @@
     "y": ["translateY"],
     "rotation": ["rotate"],
     "scale": ["scaleX", "scaleY"],
-    "autoAlpha": ["opacity", "visibility"]
+    "autoAlpha": ["opacity", "visibility"],
+    "drawSVG": ["strokeDasharray", "strokeDashoffset"]
   }
 }
