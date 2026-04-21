@@ -1,6 +1,6 @@
 {
   "spatial": {
-    "transformedPts": { "comparison": "iou", "threshold": 0.80, "getter": "transformedPts", "autoExtract": true },
+    "transformedPts": { "comparison": "iou", "threshold": 0.90, "getter": "transformedPts", "autoExtract": true },
     "translateX":      { "comparison": "numeric", "tolerance": 1.0, "getter": "gsap", "gsapProp": "x" },
     "translateY":      { "comparison": "numeric", "tolerance": 1.0, "getter": "gsap", "gsapProp": "y", "negate": true },
     "rotate":          { "comparison": "numeric", "tolerance": 0.5, "getter": "gsap", "gsapProp": "rotation" },
@@ -11,10 +11,10 @@
   },
   "visual": {
     "fill":             { "comparison": "equality" },
-    "fillOpacity":      { "comparison": "equality" },
+    "fillOpacity":      { "comparison": "equality", "tolerance": 0.01 },
     "stroke":           { "comparison": "equality" },
-    "strokeWidth":      { "comparison": "equality" },
-    "strokeOpacity":    { "comparison": "equality" },
+    "strokeWidth":      { "comparison": "equality", "tolerance": 0.01 },
+    "strokeOpacity":    { "comparison": "equality", "tolerance": 0.01 },
     "opacity":          { "comparison": "numeric", "tolerance": 0.01 },
     "visibility":       { "comparison": "equality" },
     "display":          { "comparison": "equality" },

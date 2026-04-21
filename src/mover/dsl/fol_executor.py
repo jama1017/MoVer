@@ -315,7 +315,10 @@ class FOLExecutor(FunctionDomainExecutor):
                 type_intersection = motion_type_enum & transform_types_enum
                 if type_intersection != TransformType.NONE:
                     list_is_transform_in_dir = []
-                    for curr_type_intersection in type_intersection:
+                    ## Iterate over TransformType members manually for Python 3.10 compatibility (Flag.__iter__ requires 3.11+)
+                    for curr_type_intersection in TransformType:
+                        if curr_type_intersection not in type_intersection or curr_type_intersection == TransformType.NONE:
+                            continue
                         motion_type = transform_string_to_type[curr_type_intersection.name.lower()]
                         transform_direction = element['{}_directions'.format(transform_type_to_string[motion_type])][i]
                         match motion_type:
@@ -405,7 +408,10 @@ class FOLExecutor(FunctionDomainExecutor):
                     transform_types_enum = parse_motion_type_string(element['transformTypes'][i])
                     type_intersection = motion_type_enum & transform_types_enum
                     if type_intersection != TransformType.NONE:
-                        for curr_type_intersection in type_intersection:
+                        ## Iterate over TransformType members manually for Python 3.10 compatibility (Flag.__iter__ requires 3.11+)
+                        for curr_type_intersection in TransformType:
+                            if curr_type_intersection not in type_intersection or curr_type_intersection == TransformType.NONE:
+                                continue
                             motion_type = transform_string_to_type[curr_type_intersection.name.lower()]
                             match motion_type:
                                 case "T":
@@ -631,7 +637,10 @@ class FOLExecutor(FunctionDomainExecutor):
             tweens = element['tweens']
             
             for tween in tweens:
-                for motion_type in motion_type_enum:
+                ## Iterate over TransformType members manually for Python 3.10 compatibility (Flag.__iter__ requires 3.11+)
+                for motion_type in TransformType:
+                    if motion_type not in motion_type_enum or motion_type == TransformType.NONE:
+                        continue
                     if motion_type.name.lower() == tween['type']:
                         duration = tween['duration']
                         if np.isclose(duration, target_duration):

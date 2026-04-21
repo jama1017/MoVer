@@ -46,3 +46,4 @@ examples/svg/eye.svg
 !examples/two_black_squares*
 !examples/teaser_hi*
 .cursor/*
+.github/*
