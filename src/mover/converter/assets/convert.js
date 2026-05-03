@@ -60,6 +60,11 @@ function getNonAnimatedElements(svgRef) {
 
 
 function getAnimationInfo(fps = 60) {
+    const sampleFps = Number(fps);
+    if (!Number.isFinite(sampleFps) || sampleFps <= 0) {
+        throw new Error(`Invalid fps: ${fps}`);
+    }
+
     const INFINITE_THRESHOLD = 1000000;
     let animDuration = tl_to_use.totalDuration();
     console.log("Timeline total duration:", animDuration);
@@ -88,8 +93,8 @@ function getAnimationInfo(fps = 60) {
         }
     }
     
-    const steps = Math.ceil(animDuration * fps);
-    return { animDuration, fps, steps };
+    const steps = Math.ceil(animDuration * sampleFps);
+    return { animDuration, fps: sampleFps, steps };
 }
 
 
@@ -205,11 +210,11 @@ function convertToKeyframes(allElems) {
     return res
 }
 
-function getAllTransformationValues(animatedElems) {
-    const { animDuration, fps, steps } = getAnimationInfo(60);
+function getAllTransformationValues(animatedElems, fps = 60) {
+    const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
 
     let res = {}
-    res["info"] = { "duration": animDuration, "fps": fps, "steps": steps }
+    res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
     res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
 
     for (let j = 0; j < animatedElems.length; j++) {
@@ -227,8 +232,8 @@ function getAllTransformationValues(animatedElems) {
         elem_tweens.forEach(function (tween) {
             let tween_type = (tween.data && tween.data.type) ? tween.data.type : 'other'
             let tween_duration = tween.duration()
-            let tween_start = tween.startTime() * fps
-            let tween_end = tween.endTime() * fps
+            let tween_start = tween.startTime() * sampleFps
+            let tween_end = tween.endTime() * sampleFps
             let tween_info = { "type": tween_type, "duration": tween_duration, "start": tween_start, "end": tween_end }
             tweens_info.push(tween_info)
         })
@@ -236,7 +241,7 @@ function getAllTransformationValues(animatedElems) {
     }
 
     for (let i = 0; i < steps + 1; i++) {
-        tl_to_use.seek(getSeekTime(i, fps, animDuration), false).pause()
+        tl_to_use.seek(getSeekTime(i, sampleFps, animDuration), false).pause()
 
         for (let j = 0; j < animatedElems.length; j++) {
             let elem = animatedElems[j]
@@ -648,7 +653,7 @@ function extractAnimatedProperties(svgRef, registry) {
 }
 
 
-function createRenderedData(allElems, registry, propertyConfig = null) {
+function createRenderedData(allElems, registry, propertyConfig = null, fps = 60) {
     // registry = property_registry.json (auto-loaded by Python)
     // propertyConfig = { spatial: ["transformedPts", "rotate", ...],
     //                    visual: ["fill", "opacity", ...],
@@ -662,10 +667,10 @@ function createRenderedData(allElems, registry, propertyConfig = null) {
     };
     const visualProps = config.visual || [];
 
-    const { animDuration, fps, steps } = getAnimationInfo(60);
+    const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
 
     let res = {}
-    res["info"] = { "duration": animDuration, "fps": fps, "steps": steps }
+    res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
     res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
 
     for (let j = 0; j < allElems.length; j++) {
@@ -676,7 +681,7 @@ function createRenderedData(allElems, registry, propertyConfig = null) {
 
     // Get comparison properties at each timestep
     for (let i = 0; i < steps + 1; i++) {
-        tl_to_use.seek(getSeekTime(i, fps, animDuration)).pause()
+        tl_to_use.seek(getSeekTime(i, sampleFps, animDuration)).pause()
 
         for (let j = 0; j < allElems.length; j++) {
             let elem = allElems[j]
@@ -720,7 +725,7 @@ function createRenderedData(allElems, registry, propertyConfig = null) {
     return res;
 }
 
-async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false, registry=null, comparisonPropertyConfig=null, saveAnimatedProperties=false){
+async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false, registry=null, comparisonPropertyConfig=null, saveAnimatedProperties=false, fps=60){
     console.log("Converting...");
 
     // This ensures dynamically added tweens are present before we gather animation data
@@ -733,7 +738,7 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
     }
     let nonAnimatedElems = getNonAnimatedElements(svgRef);
     let allElems = [...animatedElems, ...nonAnimatedElems];
-    let animData = getAllTransformationValues(allElems);
+    let animData = getAllTransformationValues(allElems, fps);
     let objectData = createObjectList(animatedElems, nonAnimatedElems)
     animData["info"]["objects"] = objectData
     console.log("port: ", port)
@@ -759,7 +764,7 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
     }
 
     if (saveForComparison) {
-        let renderedData = createRenderedData(allElems, registry, comparisonPropertyConfig);
+        let renderedData = createRenderedData(allElems, registry, comparisonPropertyConfig, fps);
         const response_rendered = await fetch(`http://localhost:${port}/convert-js-to-rendered-json`, {
             method: 'POST',
             headers: {

@@ -19,10 +19,17 @@ import io
 import uvicorn
 
 
+VIDEO_OUTPUT_FORMATS = {"mp4", "gif"}
+FRAME_OUTPUT_FORMATS = {"png", "svg"}
+SUPPORTED_OUTPUT_FORMATS = VIDEO_OUTPUT_FORMATS | FRAME_OUTPUT_FORMATS
+
+
 def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: int = 30, output_format: str = "mp4") -> None:
     """Create a video or GIF from a list of frames using OpenCV and ffmpeg."""
     if not frames:
         raise ValueError("No frames provided")
+    if output_format not in VIDEO_OUTPUT_FORMATS:
+        raise ValueError(f"Unsupported video output format: {output_format}")
     
     height, width = frames[0].shape[:2]
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -78,16 +85,24 @@ async def capture_frames_server_driven(
 ) -> None:
     """
     Server-driven frame capture: Python controls the timeline and screenshots.
-    Frames are streamed to disk to avoid holding all in memory.
+    Video/GIF frames are streamed through a temp directory; PNG/SVG outputs
+    are saved as per-frame files in a directory.
     """
-    # 1. Get animation info from the page
-    anim_info = await page.evaluate("() => getAnimationInfo()")
+    output_format = output_format.lower()
+    if fps <= 0:
+        raise ValueError("fps must be positive")
+    if output_format not in SUPPORTED_OUTPUT_FORMATS:
+        raise ValueError(f"Unsupported output format: {output_format}")
+
+    ## Get animation info from the page using the same FPS used for seeking.
+    anim_info = await page.evaluate("fps => getAnimationInfo(fps)", fps)
     duration = anim_info["animDuration"]
     total_frames = anim_info["steps"]
+    capture_frame_count = total_frames + 1
 
-    print(f"Capturing {total_frames + 1} frames at {fps} FPS (duration: {duration}s)")
+    print(f"Capturing {capture_frame_count} frames at {fps} FPS (duration: {duration}s)")
 
-    # 2. Hide GSDevTools if present (it overlays on top of the SVG)
+    ## Hide GSDevTools if present (it overlays on top of the SVG).
     await page.evaluate("""() => {
         const devtools = document.querySelector('#GSDevTools');
         if (devtools) devtools.style.display = 'none';
@@ -95,32 +110,53 @@ async def capture_frames_server_driven(
         document.querySelectorAll('[class*="gs-dev-tools"]').forEach(el => el.style.display = 'none');
     }""")
 
-    # 3. Locate the SVG element once
+    ## Locate the SVG element once.
     svg_element = page.locator("svg").first
     await svg_element.wait_for(state="visible")
 
-    # 3. Stream frames to a temp directory
-    temp_dir = tempfile.mkdtemp(prefix="mover_frames_")
+    output_target = Path(output_path)
+    cleanup_temp_dir = output_format in VIDEO_OUTPUT_FORMATS
+    if cleanup_temp_dir:
+        output_target.parent.mkdir(parents=True, exist_ok=True)
+        frames_dir = Path(tempfile.mkdtemp(prefix="mover_frames_"))
+    else:
+        frames_dir = output_target
+        if frames_dir.suffix.lower() == f".{output_format}":
+            frames_dir = frames_dir.with_suffix("")
+        if frames_dir.exists() and not frames_dir.is_dir():
+            raise ValueError(f"Frame output path exists and is not a directory: {frames_dir}")
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
+            existing_frame.unlink()
 
     try:
-        for frame_index in range(total_frames + 1):
-            # Seek the timeline from Python using the existing JS helper
+        for frame_index in range(capture_frame_count):
             await page.evaluate(f"() => seekToFrame({frame_index}, {fps}, {duration})")
 
-            # Wait for repaint
             await page.evaluate(
                 "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
             )
 
-            # Screenshot the SVG element directly to disk
-            frame_path = Path(temp_dir) / f"frame_{frame_index:06d}.png"
-            await svg_element.screenshot(path=str(frame_path), type="png")
+            if output_format == "svg":
+                frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
+                svg_markup = await page.evaluate("""() => {
+                    const svg = document.querySelector("svg");
+                    if (!svg) throw new Error("No SVG element found");
+                    return new XMLSerializer().serializeToString(svg);
+                }""")
+                frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
+            else:
+                frame_path = frames_dir / f"frame_{frame_index:06d}.png"
+                await svg_element.screenshot(path=str(frame_path), type="png")
 
-            # Progress reporting
-            if (frame_index + 1) % max(1, (total_frames + 1) // 10) == 0 or frame_index == total_frames:
-                print(f"  Captured frame {frame_index + 1}/{total_frames + 1}")
+            if (frame_index + 1) % max(1, capture_frame_count // 10) == 0 or frame_index == capture_frame_count - 1:
+                print(f"  Captured frame {frame_index + 1}/{capture_frame_count}")
 
-        # 4. Encode video using FFmpeg directly from image sequence
+        if output_format in FRAME_OUTPUT_FORMATS:
+            print(f"{output_format.upper()} frames saved to {frames_dir}")
+            return
+
+        ## Encode video using FFmpeg directly from image sequence.
         try:
             subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
 
@@ -128,7 +164,7 @@ async def capture_frames_server_driven(
                 subprocess.run([
                     'ffmpeg', '-y',
                     '-framerate', str(fps),
-                    '-i', str(Path(temp_dir) / 'frame_%06d.png'),
+                    '-i', str(frames_dir / 'frame_%06d.png'),
                     '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
                     str(output_path)
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
@@ -136,7 +172,7 @@ async def capture_frames_server_driven(
                 subprocess.run([
                     'ffmpeg', '-y',
                     '-framerate', str(fps),
-                    '-i', str(Path(temp_dir) / 'frame_%06d.png'),
+                    '-i', str(frames_dir / 'frame_%06d.png'),
                     '-c:v', 'libx264',
                     '-preset', 'ultrafast',
                     '-crf', '23',
@@ -151,8 +187,8 @@ async def capture_frames_server_driven(
             print("ffmpeg not found, falling back to OpenCV encoding")
             # Fallback: read frames back and use OpenCV
             frames = []
-            for frame_index in range(total_frames + 1):
-                frame_path = Path(temp_dir) / f"frame_{frame_index:06d}.png"
+            for frame_index in range(capture_frame_count):
+                frame_path = frames_dir / f"frame_{frame_index:06d}.png"
                 img = Image.open(frame_path)
                 if img.mode != 'RGB':
                     background = Image.new('RGB', img.size, (255, 255, 255))
@@ -166,7 +202,8 @@ async def capture_frames_server_driven(
             print(f"Video saved to {output_path} (OpenCV fallback)")
 
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if cleanup_temp_dir:
+            shutil.rmtree(frames_dir, ignore_errors=True)
 
 
 def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4", output_dir: str | None = None, save_animated_properties: bool = False) -> FastAPI:
@@ -305,17 +342,24 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             await page.evaluate(
                 f"convert({port}, {str(disable_easing).lower()}, "
                 f"{str(save_keyframes).lower()}, {str(save_for_comparison).lower()}, "
-                f"{registry_json}, {props_json}, {str(save_animated_properties).lower()})"
+                f"{registry_json}, {props_json}, {str(save_animated_properties).lower()}, {video_fps})"
             )
             
             if disable_easing:
                 print("Easing is disabled for all tweens.")
 
-            # Server-driven video creation — no HTTP round-trips per frame
+            ## Server-driven animation output — no HTTP round-trips per frame.
             if create_video:
-                print(f"Creating {output_format.upper()}...")
+                output_format = output_format.lower()
+                if output_format not in SUPPORTED_OUTPUT_FORMATS:
+                    raise ValueError(f"Unsupported output format: {output_format}")
+                output_label = f"{output_format.upper()} frames" if output_format in FRAME_OUTPUT_FORMATS else output_format.upper()
+                print(f"Creating {output_label}...")
                 video_out_dir = output_dir or html_dir
-                output_path = str(Path(video_out_dir) / f"{base_name}_animation.{output_format}")
+                if output_format in FRAME_OUTPUT_FORMATS:
+                    output_path = str(Path(video_out_dir) / f"{base_name}_animation_{output_format}")
+                else:
+                    output_path = str(Path(video_out_dir) / f"{base_name}_animation.{output_format}")
                 await capture_frames_server_driven(page, output_path, video_fps, output_format)
 
             await browser.close()
@@ -328,17 +372,18 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
 
 def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False) -> None:
     """
-    Convert a GSAP animation in an HTML file to JSON and optionally create a video.
+    Convert a GSAP animation in an HTML file to JSON and optionally create animation output.
     
     Args:
         html_file (str): Path to the HTML file containing the GSAP animation
         port (int, optional): Port to run the server on. Defaults to 3013.
-        create_video (bool, optional): Whether to create a video. Defaults to False.
+        create_video (bool, optional): Whether to create animation output. Defaults to False.
         disable_easing (bool, optional): Set all GSAP tweens' easing to none. Defaults to False.
         save_keyframes (bool, optional): Whether to save keyframes data. Defaults to False.
         save_for_comparison (bool, optional): Whether to save rendered comparison data. Defaults to False.
-        output_format (str, optional): Output format (mp4 or gif). Defaults to "mp4".
-        video_fps (int, optional): Frames per second for video creation. Defaults to 30.
+        output_format (str, optional): Output format (mp4, gif, png, or svg). Defaults to "mp4".
+            PNG and SVG formats write per-frame files to an output directory.
+        video_fps (int, optional): Frames per second for video, frame output, and JSON sampling. Defaults to 30.
         print_console (bool, optional): Whether to print console and network messages. Defaults to False.
         comparison_properties (dict, optional): Property config for comparison recording.
             Dict with keys 'spatial', 'visual', 'svgAttributes' mapping to lists of
@@ -352,15 +397,15 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Convert JavaScript animation in an HTML file to JSON and optionally create a video.")
+    parser = argparse.ArgumentParser(description="Convert JavaScript animation in an HTML file to JSON and optionally create animation output.")
     parser.add_argument("html_file", type=str, help="Path to the HTML file containing the JavaScript animation")
     parser.add_argument("port", type=int, help="Port to run the server on")
-    parser.add_argument("--create-video", "-v", action="store_true", help="Create a video of the animation")
+    parser.add_argument("--create-video", "-v", action="store_true", help="Create animation output")
     parser.add_argument("--disable-easing", "-d", action="store_true", help="Set all GSAP tweens' easing to none")
     parser.add_argument("--save-keyframes", "-k", action="store_true", help="Save keyframes data to JSON")
     parser.add_argument("--save-for-comparison", "-c", action="store_true", help="Save rendered comparison data to JSON")
-    parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif"], help="Output format for the animation (default: mp4)")
-    parser.add_argument("--video-fps", type=int, default=30, help="Frames per second for video creation (default: 30)")
+    parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif", "png", "svg"], help="Output format for the animation: mp4, gif, png, or svg frame sequence (default: mp4)")
+    parser.add_argument("--video-fps", type=int, default=30, help="Frames per second for video, frame output, and JSON sampling (default: 30)")
     parser.add_argument("--print-console", "-pc", action="store_true", help="Print console and network messages from the browser (default: False)")
     parser.add_argument("--comparison-properties", type=str, default=None, help="JSON string of property config for comparison recording, e.g. '{\"spatial\": [\"transformedPts\", \"rotate\"], \"visual\": [\"opacity\"]}'")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory to write output files to (default: same directory as the HTML file)")
