@@ -293,6 +293,27 @@ def handle_network_response(response, print_console: bool):
             print(f"    [Network Error] {response.status} {response.status_text}: {response.url}")
 
 
+async def _wait_for_server_start(server: uvicorn.Server, server_task: asyncio.Task, timeout_s: float = 10.0) -> None:
+    """Wait until Uvicorn has bound its socket and completed startup."""
+    start_time = asyncio.get_running_loop().time()
+    while not server.started:
+        if server_task.done():
+            await server_task
+        if asyncio.get_running_loop().time() - start_time > timeout_s:
+            raise TimeoutError("Timed out waiting for conversion server to start")
+        await asyncio.sleep(0.01)
+
+
+def _get_bound_port(server: uvicorn.Server) -> int:
+    """Return the actual localhost port bound by Uvicorn."""
+    if not server.servers:
+        raise RuntimeError("Conversion server did not expose any bound sockets")
+    sockets = server.servers[0].sockets
+    if not sockets:
+        raise RuntimeError("Conversion server did not expose any bound sockets")
+    return sockets[0].getsockname()[1]
+
+
 async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
@@ -313,6 +334,9 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
     server_task = asyncio.create_task(server.serve())
 
     try:
+        await _wait_for_server_start(server, server_task)
+        actual_port = _get_bound_port(server)
+
         # Initialize Playwright
         async with async_playwright() as p:
             browser = await p.chromium.launch()
@@ -325,7 +349,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             print("Page loading time: ", end="", flush=True)
             start_time = asyncio.get_event_loop().time()
             ## Use networkidle to wait for all resources (including web fonts) to load
-            await page.goto(f"http://127.0.0.1:{port}", wait_until="networkidle")
+            await page.goto(f"http://127.0.0.1:{actual_port}", wait_until="networkidle")
             ## Explicitly wait for all fonts to be ready
             await page.evaluate("document.fonts.ready")
             print("Fonts loaded")
@@ -333,16 +357,16 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             print(f"{load_time:.2f} seconds")
 
             ## Execute JavaScript in the page context
-            registry_json = "null"
+            registry = None
             if save_for_comparison or save_animated_properties:
                 registry_path = Path(__file__).parent / "assets" / "property_registry.json"
                 with open(registry_path) as f:
-                    registry_json = f.read()
-            props_json = json.dumps(comparison_properties) if comparison_properties else "null"
+                    registry = json.load(f)
             await page.evaluate(
-                f"convert({port}, {str(disable_easing).lower()}, "
-                f"{str(save_keyframes).lower()}, {str(save_for_comparison).lower()}, "
-                f"{registry_json}, {props_json}, {str(save_animated_properties).lower()}, {video_fps})"
+                """([port, disableEasing, saveKeyframes, saveForComparison, registry, comparisonProperties, saveAnimatedProperties, fps]) =>
+                    convert(port, disableEasing, saveKeyframes, saveForComparison, registry, comparisonProperties, saveAnimatedProperties, fps)
+                """,
+                [actual_port, disable_easing, save_keyframes, save_for_comparison, registry, comparison_properties, save_animated_properties, video_fps]
             )
             
             if disable_easing:
@@ -368,6 +392,8 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         # Stop the server
         server.should_exit = True
         await server.shutdown()
+        if not server_task.done():
+            await server_task
 
 
 def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False) -> None:
@@ -376,7 +402,8 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
     
     Args:
         html_file (str): Path to the HTML file containing the GSAP animation
-        port (int, optional): Port to run the server on. Defaults to 3013.
+        port (int, optional): Port to run the server on. Use 0 to let the OS choose
+            an available localhost port. Defaults to 3013.
         create_video (bool, optional): Whether to create animation output. Defaults to False.
         disable_easing (bool, optional): Set all GSAP tweens' easing to none. Defaults to False.
         save_keyframes (bool, optional): Whether to save keyframes data. Defaults to False.
@@ -399,7 +426,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Convert JavaScript animation in an HTML file to JSON and optionally create animation output.")
     parser.add_argument("html_file", type=str, help="Path to the HTML file containing the JavaScript animation")
-    parser.add_argument("port", type=int, help="Port to run the server on")
+    parser.add_argument("port", type=int, help="Port to run the server on. Use 0 to let the OS choose an available localhost port")
     parser.add_argument("--create-video", "-v", action="store_true", help="Create animation output")
     parser.add_argument("--disable-easing", "-d", action="store_true", help="Set all GSAP tweens' easing to none")
     parser.add_argument("--save-keyframes", "-k", action="store_true", help="Save keyframes data to JSON")
