@@ -1,10 +1,11 @@
+import io
 import os
 import json
 import asyncio
 import argparse
 import tempfile
 import shutil
-from typing import List, Optional
+from typing import List
 from pathlib import Path
 import cv2
 import numpy as np
@@ -15,7 +16,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright, Page
 import subprocess
 from PIL import Image
-import io
 import uvicorn
 
 
@@ -82,7 +82,8 @@ async def capture_frames_server_driven(
     output_path: str,
     fps: int = 30,
     output_format: str = "mp4",
-) -> None:
+    in_memory: bool = False,
+) -> None | list[io.FileIO]:
     """
     Server-driven frame capture: Python controls the timeline and screenshots.
     Video/GIF frames are streamed through a temp directory; PNG/SVG outputs
@@ -114,6 +115,11 @@ async def capture_frames_server_driven(
     svg_element = page.locator("svg").first
     await svg_element.wait_for(state="visible")
 
+    ## Extracting the SVG coordinates once speeds up screenshots
+    box = await svg_element.bounding_box()
+    clip = {"x": box["x"], "y": box["y"],
+            "width": box["width"], "height": box["height"], "scale": 1}
+
     output_target = Path(output_path)
     cleanup_temp_dir = output_format in VIDEO_OUTPUT_FORMATS
     if cleanup_temp_dir:
@@ -129,6 +135,9 @@ async def capture_frames_server_driven(
         for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
             existing_frame.unlink()
 
+    if in_memory:
+        frames = []
+
     try:
         for frame_index in range(capture_frame_count):
             await page.evaluate(f"() => seekToFrame({frame_index}, {fps}, {duration})")
@@ -138,21 +147,34 @@ async def capture_frames_server_driven(
             )
 
             if output_format == "svg":
-                frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
                 svg_markup = await page.evaluate("""() => {
                     const svg = document.querySelector("svg");
                     if (!svg) throw new Error("No SVG element found");
                     return new XMLSerializer().serializeToString(svg);
                 }""")
-                frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
+                if in_memory:
+                    frames.append(io.StringIO(svg_markup))
+                else:
+                    frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
+                    frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
             else:
-                frame_path = frames_dir / f"frame_{frame_index:06d}.png"
-                await svg_element.screenshot(path=str(frame_path), type="png")
+                png_bytes = await page.screenshot(type="png", clip=clip, full_page=True)
+
+                if in_memory:
+                    img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                    frames.append(np.asarray(img, dtype=np.float32) / 255.0)
+                else:
+                    frame_path = frames_dir / f"frame_{frame_index:06d}.png"
+                    with open(frame_path, "wb") as f:
+                        f.write(png_bytes)
 
             if (frame_index + 1) % max(1, capture_frame_count // 10) == 0 or frame_index == capture_frame_count - 1:
                 print(f"  Captured frame {frame_index + 1}/{capture_frame_count}")
 
-        if output_format in FRAME_OUTPUT_FORMATS:
+        if output_format in FRAME_OUTPUT_FORMATS and in_memory:
+            return frames, 0
+
+        if output_format in FRAME_OUTPUT_FORMATS and not in_memory:
             print(f"{output_format.upper()} frames saved to {frames_dir}")
             return
 
@@ -356,21 +378,8 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             load_time = asyncio.get_event_loop().time() - start_time
             print(f"{load_time:.2f} seconds")
 
-            ## Execute JavaScript in the page context
-            registry = None
-            if save_for_comparison or save_animated_properties:
-                registry_path = Path(__file__).parent / "assets" / "property_registry.json"
-                with open(registry_path) as f:
-                    registry = json.load(f)
-            await page.evaluate(
-                """([port, disableEasing, saveKeyframes, saveForComparison, registry, comparisonProperties, saveAnimatedProperties, fps]) =>
-                    convert(port, disableEasing, saveKeyframes, saveForComparison, registry, comparisonProperties, saveAnimatedProperties, fps)
-                """,
-                [actual_port, disable_easing, save_keyframes, save_for_comparison, registry, comparison_properties, save_animated_properties, video_fps]
-            )
-            
-            if disable_easing:
-                print("Easing is disabled for all tweens.")
+            await capture_json_animation(actual_port, comparison_properties, disable_easing, page,
+                                         save_animated_properties, save_for_comparison, save_keyframes, video_fps)
 
             ## Server-driven animation output — no HTTP round-trips per frame.
             if create_video:
@@ -381,9 +390,9 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
                 print(f"Creating {output_label}...")
                 video_out_dir = output_dir or html_dir
                 if output_format in FRAME_OUTPUT_FORMATS:
-                    output_path = str(Path(video_out_dir) / f"{base_name}_animation_{output_format}")
+                    output_path = str(Path(video_out_dir) / f"{base_name}_animation_{video_fps}_{output_format}")
                 else:
-                    output_path = str(Path(video_out_dir) / f"{base_name}_animation.{output_format}")
+                    output_path = str(Path(video_out_dir) / f"{base_name}_animation_{video_fps}.{output_format}")
                 await capture_frames_server_driven(page, output_path, video_fps, output_format)
 
             await browser.close()
@@ -394,6 +403,26 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         await server.shutdown()
         if not server_task.done():
             await server_task
+
+async def capture_json_animation(actual_port: int, comparison_properties: dict | None, disable_easing: bool, page: Page,
+                                 save_animated_properties: bool, save_for_comparison: bool, save_keyframes: bool,
+                                 video_fps: int):
+    ## Execute JavaScript in the page context
+    registry = None
+    if save_for_comparison or save_animated_properties:
+        registry_path = Path(__file__).parent / "assets" / "property_registry.json"
+        with open(registry_path) as f:
+            registry = json.load(f)
+    await page.evaluate(
+        """([port, disableEasing, saveKeyframes, saveForComparison, registry, comparisonProperties, saveAnimatedProperties, fps]) =>
+            convert(port, disableEasing, saveKeyframes, saveForComparison, registry, comparisonProperties, saveAnimatedProperties, fps)
+        """,
+        [actual_port, disable_easing, save_keyframes, save_for_comparison, registry, comparison_properties,
+         save_animated_properties, video_fps]
+    )
+
+    if disable_easing:
+        print("Easing is disabled for all tweens.")
 
 
 def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False) -> None:

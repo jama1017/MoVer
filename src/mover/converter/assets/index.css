@@ -13,7 +13,7 @@ body {
     display: none;
 }
 
-svg {
-    background-image: url('./grid.svg');
-    background-repeat: "no-repeat";
-}
+/*svg {*/
+/*    background-image: url('./grid.svg');*/
+/*    background-repeat: "no-repeat";*/
+/*}*/

@@ -38,6 +38,7 @@ dependencies = [
     "torchvision",
     "ipykernel>=6.29.5",
     "pyrealb",
+    "opencv-python>=4.13.0.92",
 ]
 
 [project.urls]
@@ -46,7 +47,7 @@ Repository = "https://github.com/jama1017/MoVer"
 "Bug Tracker" = "https://github.com/jama1017/MoVer/issues"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
 include-package-data = false
 
 [tool.setuptools.packages.find]
@@ -79,6 +80,5 @@ dev = [
 
 [project.optional-dependencies]
 local = [
-    "ollama-python",
-    "vllm",
+    "ollama-python"
 ]
