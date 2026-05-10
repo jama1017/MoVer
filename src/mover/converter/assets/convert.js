@@ -186,13 +186,19 @@ function seekAndAppendToDomUsingTimes(seekTimes) {
         svgCopy.style.setProperty("height", "128px", "important");
         svgCopy.style.setProperty("display", "block", "important");
     }
-    document.querySelector("body > svg").style.setProperty("visibility", "hidden");
-    document.querySelector("body > br").style.setProperty("visibility", "hidden");
+    // visibility:hidden removes the element from rendering but keeps its
+    // layout space, so the wrappers were getting pushed down ~96px (the SVG's
+    // displayed height at 128 wide @ 4:3 aspect). Use display:none so the
+    // wrapper grid actually starts at row 0 of the body — without this the
+    // browser_pool chunker (which slices at i*128) reads the wrong rows and
+    // every captured frame is offset in Y.
+    document.querySelector("body > svg").style.setProperty("display", "none", "important");
+    document.querySelector("body > br").style.setProperty("display", "none");
     document.querySelector("body").style.setProperty("padding", "0", "important");
 }
 
 function resetSeekAndAppend() {
-    document.querySelector("body > svg").style.setProperty("visibility", "visible");
+    document.querySelector("body > svg").style.removeProperty("display");
     document.querySelectorAll("body > div").forEach(d => d.remove());
 
 }
