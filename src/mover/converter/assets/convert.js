@@ -116,141 +116,216 @@ function getSvgDimensions() {
 // Seek timeline to a specific frame index. Returns true if successful.
 function seekToFrame(frameIndex, fps, animDuration) {
     const seekTime = getSeekTime(frameIndex, fps, animDuration);
-    tl_to_use.seek(seekTime, false);
-    tl_to_use.pause();
-    return true;
+    return seekToTime(seekTime);
 }
 
 function seekToTime(seekTime) {
-    tl_to_use.seek(seekTime, false);
-    tl_to_use.pause();
+    if (!Number.isFinite(seekTime)) {
+        throw new TypeError("seekTime must be a finite number");
+    }
+
+    const globalTimeline = (
+        typeof gsap !== "undefined" && gsap.globalTimeline
+    );
+    const canSeekThroughGlobalTimeline = (
+        globalTimeline
+        && globalTimeline !== tl_to_use
+        && typeof globalTimeline.time === "function"
+        && typeof tl_to_use.globalTime === "function"
+    );
+
+    if (canSeekThroughGlobalTimeline) {
+        globalTimeline.pause();
+        const targetWasPaused = (
+            typeof tl_to_use.paused === "function" && tl_to_use.paused()
+        );
+        if (targetWasPaused) {
+            tl_to_use.paused(false);
+        }
+        const globalSeekTime = tl_to_use.globalTime(seekTime);
+        if (targetWasPaused) {
+            tl_to_use.paused(true);
+        }
+        globalTimeline.time(globalSeekTime, false);
+        globalTimeline.pause();
+        tl_to_use.seek(seekTime, false);
+        tl_to_use.pause();
+    } else {
+        tl_to_use.seek(seekTime, false);
+        tl_to_use.pause();
+    }
+
     return true;
 }
 
-function uniquifySvgIds(svg, prefix, sourceSvg = null) {
-  const map = new Map();
-  const referencedIds = new Set();
-  const allElements = [svg, ...svg.querySelectorAll("*")];
-  const sourceElements = sourceSvg
-    ? [sourceSvg, ...sourceSvg.querySelectorAll("*")]
-    : [];
-  const svgUrlProperties = [
-    "fill",
-    "stroke",
-    "filter",
-    "clip-path",
-    "mask",
-    "marker-start",
-    "marker-mid",
-    "marker-end",
-  ];
-
-  const collectReferences = value => {
-    const urlPattern = /url\(\s*(['"]?)[^'")]*#([^'")\s]+)\1\s*\)/g;
-    for (const match of value.matchAll(urlPattern)) {
-      referencedIds.add(match[2]);
+function captureGsapAnimationState(animation) {
+    if (!animation) {
+        return null;
     }
-    const trimmedValue = value.trim();
-    if (/^#[^\s]+$/.test(trimmedValue)) {
-      referencedIds.add(trimmedValue.slice(1));
+    const usesTotalTime = typeof animation.totalTime === "function";
+    const time = usesTotalTime
+        ? animation.totalTime()
+        : (typeof animation.time === "function" ? animation.time() : null);
+    return {
+        animation,
+        time,
+        usesTotalTime,
+        paused: (
+            typeof animation.paused === "function"
+                ? animation.paused()
+                : null
+        ),
+        timeScale: (
+            typeof animation.timeScale === "function"
+                ? animation.timeScale()
+                : null
+        ),
+    };
+}
+
+function restoreGsapAnimationState(state) {
+    if (!state) {
+        return;
     }
-  };
-
-  allElements.forEach(el => {
-    for (const attr of el.getAttributeNames()) {
-      collectReferences(el.getAttribute(attr));
+    const { animation, time, usesTotalTime, paused, timeScale } = state;
+    animation.pause();
+    if (timeScale !== null) {
+        animation.timeScale(timeScale);
     }
-  });
-  svg.querySelectorAll("style").forEach(styleElement => {
-    collectReferences(styleElement.textContent);
-  });
-  if (sourceElements.length === allElements.length) {
-    sourceElements.forEach(sourceElement => {
-      const computedStyle = getComputedStyle(sourceElement);
-      svgUrlProperties.forEach(property => {
-        collectReferences(computedStyle.getPropertyValue(property));
-      });
-    });
-  }
-
-  const elementsToRename = allElements
-    .map((element, index) => ({ element, index }))
-    .filter(({ element }) => (
-      element.id && (element.closest("defs") || referencedIds.has(element.id))
-    ));
-
-  elementsToRename.forEach(({ element }) => {
-    const el = element;
-    const oldId = el.id;
-    const newId = `${prefix}_${oldId}`;
-    map.set(oldId, newId);
-    el.id = newId;
-  });
-
-  if (sourceElements.length === allElements.length) {
-    const styleCopyIndices = new Set();
-    elementsToRename.forEach(({ element }) => {
-      allElements.forEach((candidate, index) => {
-        if (element.contains(candidate)) {
-          styleCopyIndices.add(index);
+    if (time !== null) {
+        if (usesTotalTime) {
+            animation.totalTime(time, true);
+        } else {
+            animation.time(time, true);
         }
-      });
+    }
+    if (paused !== null && typeof animation.paused === "function") {
+        animation.paused(paused);
+    }
+}
+
+function createFrameSnapshotHtml(srcSvg, frameSize, hideGrid) {
+    const sourceSvgIndex = Array.from(
+        document.querySelectorAll("body > svg")
+    ).indexOf(srcSvg);
+    const documentCopy = document.documentElement.cloneNode(true);
+    documentCopy.querySelectorAll("script").forEach(element => {
+        element.type = "application/x-mover-snapshot";
+        element.removeAttribute("src");
+        element.textContent = "";
+    });
+    documentCopy.querySelectorAll("meta[http-equiv='refresh' i]")
+        .forEach(element => {
+            element.removeAttribute("http-equiv");
+            element.removeAttribute("content");
+        });
+    documentCopy.querySelectorAll("iframe").forEach(element => {
+        element.removeAttribute("src");
+        element.removeAttribute("srcdoc");
+    });
+    documentCopy.querySelectorAll("object").forEach(element => {
+        element.removeAttribute("data");
+    });
+    documentCopy.querySelectorAll("embed").forEach(element => {
+        element.removeAttribute("src");
+    });
+    documentCopy.querySelectorAll(`[${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
+        .forEach(frame => frame.remove());
+
+    const headCopy = documentCopy.querySelector("head");
+    const bodyCopy = documentCopy.querySelector("body");
+    const sourceSvgCopy = bodyCopy.querySelectorAll(":scope > svg")[sourceSvgIndex];
+    if (!sourceSvgCopy) {
+        throw new Error("Unable to locate the source SVG in frame snapshot");
+    }
+
+    const base = document.createElement("base");
+    base.href = document.baseURI;
+    headCopy.insertBefore(base, headCopy.firstChild);
+
+    documentCopy.style.setProperty("margin", "0", "important");
+    documentCopy.style.setProperty("padding", "0", "important");
+    bodyCopy.style.setProperty("margin", "0", "important");
+    bodyCopy.style.setProperty("padding", "0", "important");
+    bodyCopy.style.setProperty("display", "block", "important");
+    Array.from(bodyCopy.children).forEach(element => {
+        if (element !== sourceSvgCopy) {
+            element.style.setProperty("display", "none", "important");
+        }
     });
 
-    styleCopyIndices.forEach(index => {
-      const element = allElements[index];
-      const computedStyle = getComputedStyle(sourceElements[index]);
-      for (let propertyIndex = 0; propertyIndex < computedStyle.length; propertyIndex++) {
-        const property = computedStyle[propertyIndex];
-        element.style.setProperty(
-          property,
-          computedStyle.getPropertyValue(property),
-          computedStyle.getPropertyPriority(property),
+    sourceSvgCopy.classList.remove("svg-width-fit-preview-target");
+    sourceSvgCopy.style.setProperty("width", `${frameSize}px`, "important");
+    sourceSvgCopy.style.setProperty("height", `${frameSize}px`, "important");
+    sourceSvgCopy.style.setProperty("overflow", "hidden", "important");
+    sourceSvgCopy.style.setProperty("display", "block", "important");
+    sourceSvgCopy.style.setProperty("margin", "0", "important");
+    sourceSvgCopy.style.setProperty("padding", "0", "important");
+    sourceSvgCopy.style.setProperty("border", "0", "important");
+    sourceSvgCopy.style.setProperty("box-sizing", "border-box", "important");
+    if (hideGrid) {
+        sourceSvgCopy.style.setProperty("background-image", "none", "important");
+    }
+
+    return `<!DOCTYPE html>${documentCopy.outerHTML}`;
+}
+
+function loadFrameSnapshot(
+    frame,
+    html,
+    timeoutMs = 10000,
+) {
+    let timeoutId;
+    const loadPromise = new Promise((resolve, reject) => {
+        frame.addEventListener("load", async () => {
+            try {
+                const frameDocument = frame.contentDocument;
+                await frameDocument.fonts.ready;
+                for (const stylesheet of frameDocument.querySelectorAll(
+                    'link[rel="stylesheet"]'
+                )) {
+                    if (!stylesheet.sheet) {
+                        throw new Error(
+                            `Frame stylesheet failed to load: ${stylesheet.href}`
+                        );
+                    }
+                }
+                const failedResources = frame.contentWindow.performance
+                    .getEntriesByType("resource")
+                    .filter(entry => (
+                        typeof entry.responseStatus === "number"
+                        && entry.responseStatus >= 400
+                    ));
+                if (failedResources.length > 0) {
+                    throw new Error(
+                        `Frame resources failed to load: ${
+                            failedResources.map(entry => entry.name).join(", ")
+                        }`
+                    );
+                }
+                await new Promise(resolve => {
+                    frame.contentWindow.requestAnimationFrame(resolve);
+                });
+                resolve();
+            } catch (error) {
+                reject(error);
+            }
+        }, { once: true });
+        frame.addEventListener(
+            "error",
+            () => reject(new Error("Frame snapshot failed to load")),
+            { once: true },
         );
-      }
+        frame.srcdoc = html;
     });
-
-    allElements.forEach((element, index) => {
-      const computedStyle = getComputedStyle(sourceElements[index]);
-      svgUrlProperties.forEach(property => {
-        const value = computedStyle.getPropertyValue(property);
-        if ([...map.keys()].some(oldId => value.includes(`#${oldId}`))) {
-          element.style.setProperty(property, value);
-        }
-      });
-    });
-  }
-
-  allElements.forEach(el => {
-    for (const attr of el.getAttributeNames()) {
-      let value = el.getAttribute(attr);
-
-      for (const [oldId, newId] of map) {
-        const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        value = value.replace(
-          new RegExp(`url\\(\\s*(['"]?)[^'")]*#${escapedId}\\1\\s*\\)`, "g"),
-          (_match, quote) => `url(${quote}#${newId}${quote})`,
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(
+            () => reject(new Error("Frame snapshot timed out while loading")),
+            timeoutMs,
         );
-        if (value === `#${oldId}`) {
-          value = `#${newId}`;
-        }
-      }
-
-      el.setAttribute(attr, value);
-    }
-  });
-
-  svg.querySelectorAll("style").forEach(styleElement => {
-    let css = styleElement.textContent;
-    for (const [oldId, newId] of map) {
-      const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      css = css.replace(
-        new RegExp(`#${escapedId}(?![\\w-])`, "g"),
-        `#${newId}`,
-      );
-    }
-    styleElement.textContent = css;
-  });
+    });
+    return Promise.race([loadPromise, timeoutPromise])
+        .finally(() => clearTimeout(timeoutId));
 }
 
 function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
@@ -267,7 +342,7 @@ function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
 const MOVER_BATCH_FRAME_ATTRIBUTE = "data-mover-batch-frame";
 let moverBatchCaptureState = null;
 
-function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
+async function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
     if (!Array.isArray(seekTimes)) {
         throw new TypeError("seekTimes must be an array");
     }
@@ -307,6 +382,13 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
             element,
             style: element.getAttribute("style"),
         }));
+    const globalTimeline = (
+        typeof gsap !== "undefined" ? gsap.globalTimeline : null
+    );
+    const gsapStates = [captureGsapAnimationState(globalTimeline)];
+    if (tl_to_use !== globalTimeline) {
+        gsapStates.push(captureGsapAnimationState(tl_to_use));
+    }
 
     moverBatchCaptureState = {
         root,
@@ -314,7 +396,8 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
         body,
         bodyStyle: body.getAttribute("style"),
         hiddenElements,
-        wrappers: [],
+        gsapStates,
+        frames: [],
     };
 
     try {
@@ -325,45 +408,39 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
         body.style.setProperty("display", "block", "important");
 
         for (let i = 0; i < seekTimes.length; i++) {
-            tl_to_use.seek(seekTimes[i], false);
-            tl_to_use.pause();
+            seekToTime(seekTimes[i]);
 
-            const wrapper = document.createElement("div");
-            const svgCopy = srcSvg.cloneNode(true);
-            uniquifySvgIds(svgCopy, `mover_frame_${i}`, srcSvg);
+            const frame = document.createElement("iframe");
+            frame.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
+            frame.setAttribute("data-mover-frame-size", String(frameSize));
+            frame.setAttribute("sandbox", "allow-same-origin");
+            frame.style.setProperty("width", `${frameSize}px`, "important");
+            frame.style.setProperty("height", `${frameSize}px`, "important");
+            frame.style.setProperty("display", "block", "important");
+            frame.style.setProperty("margin", "0", "important");
+            frame.style.setProperty("padding", "0", "important");
+            frame.style.setProperty("border", "0", "important");
+            frame.style.setProperty("box-sizing", "border-box", "important");
 
-            wrapper.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
-            wrapper.setAttribute("data-mover-frame-size", String(frameSize));
-            wrapper.style.width = `${frameSize}px`;
-            wrapper.style.height = `${frameSize}px`;
-            wrapper.style.overflow = "hidden";
-            wrapper.style.display = "block";
-            wrapper.style.margin = "0";
-            wrapper.style.padding = "0";
-            wrapper.style.border = "0";
-            wrapper.style.boxSizing = "border-box";
-
-            svgCopy.classList.remove("svg-width-fit-preview-target");
-            svgCopy.style.setProperty("width", `${frameSize}px`, "important");
-            svgCopy.style.setProperty("height", `${frameSize}px`, "important");
-            svgCopy.style.setProperty("display", "block", "important");
-            if (hideGrid) {
-                svgCopy.style.setProperty("background-image", "none", "important");
-            }
-
-            wrapper.appendChild(svgCopy);
-            moverBatchCaptureState.wrappers.push(wrapper);
-            body.appendChild(wrapper);
+            moverBatchCaptureState.frames.push(frame);
+            body.appendChild(frame);
+            await loadFrameSnapshot(
+                frame,
+                createFrameSnapshotHtml(srcSvg, frameSize, hideGrid),
+            );
         }
         hiddenElements.forEach(({ element }) => {
             element.style.setProperty("display", "none", "important");
+        });
+        await new Promise(resolve => {
+            requestAnimationFrame(() => requestAnimationFrame(resolve));
         });
     } catch (error) {
         resetSeekAndAppend();
         throw error;
     }
 
-    return moverBatchCaptureState.wrappers.length;
+    return moverBatchCaptureState.frames.length;
 }
 
 function resetSeekAndAppend() {
@@ -372,11 +449,23 @@ function resetSeekAndAppend() {
 
     if (!state) {
         document.querySelectorAll(`body > [${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
-            .forEach(wrapper => wrapper.remove());
+            .forEach(frame => {
+                if (frame.contentDocument) {
+                    frame.contentDocument.getAnimations()
+                        .forEach(animation => animation.cancel());
+                }
+                frame.remove();
+            });
         return false;
     }
 
-    state.wrappers.forEach(wrapper => wrapper.remove());
+    state.frames.forEach(frame => {
+        if (frame.contentDocument) {
+            frame.contentDocument.getAnimations()
+                .forEach(animation => animation.cancel());
+        }
+        frame.remove();
+    });
     state.hiddenElements.forEach(({ element, style }) => {
         if (style === null) {
             element.removeAttribute("style");
@@ -396,6 +485,7 @@ function resetSeekAndAppend() {
     } else {
         state.root.setAttribute("style", state.rootStyle);
     }
+    state.gsapStates.forEach(restoreGsapAnimationState);
 
     return true;
 }

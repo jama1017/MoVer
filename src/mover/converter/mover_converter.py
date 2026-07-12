@@ -39,59 +39,26 @@ def _get_animation_output_path(
     raise ValueError(f"Unsupported output format: {normalized_format}")
 
 
-def _save_gif_with_pillow(
-    frames: List[np.ndarray],
-    output_path: str,
-    fps: int,
-) -> None:
-    gif_frames = []
-    for frame in frames:
-        if frame.ndim == 2:
-            gif_frame = Image.fromarray(frame).convert("RGB")
-        elif frame.shape[2] == 4:
-            gif_frame = Image.fromarray(
-                cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
-            )
-        else:
-            gif_frame = Image.fromarray(
-                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            )
-        gif_frames.append(gif_frame)
-
-    gif_frames[0].save(
-        output_path,
-        format="GIF",
-        save_all=True,
-        append_images=gif_frames[1:],
-        duration=max(1, round(1000 / fps)),
-        loop=0,
-    )
-
-
 def create_video_from_frames(
     frames: List[np.ndarray],
     output_path: str,
     fps: int = 30,
     output_format: str = "mp4",
-    use_ffmpeg: bool = True,
 ) -> None:
-    """Create a video or GIF from a list of frames using OpenCV and ffmpeg."""
+    """Create MP4/GIF output; GIF requires FFmpeg, MP4 can fall back to OpenCV."""
     if not frames:
         raise ValueError("No frames provided")
     if output_format not in VIDEO_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported video output format: {output_format}")
 
-    ffmpeg_available = False
-    if use_ffmpeg:
-        try:
-            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-            ffmpeg_available = True
-        except (subprocess.SubprocessError, FileNotFoundError):
-            pass
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        ffmpeg_available = True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        ffmpeg_available = False
 
     if output_format == "gif" and not ffmpeg_available:
-        _save_gif_with_pillow(frames, output_path, fps)
-        return
+        raise RuntimeError("GIF output requires a working FFmpeg installation")
 
     height, width = frames[0].shape[:2]
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -130,12 +97,14 @@ def create_video_from_frames(
             temp_mp4_path.unlink()
             return
         except (subprocess.SubprocessError, FileNotFoundError):
-            print("ffmpeg conversion failed, using fallback encoder")
+            if output_format == "gif":
+                temp_mp4_path.unlink(missing_ok=True)
+                raise RuntimeError(
+                    "GIF output requires FFmpeg with GIF palette support"
+                )
+            print("ffmpeg conversion failed, using OpenCV MP4 output")
 
-    if output_format == "gif":
-        temp_mp4_path.unlink(missing_ok=True)
-        _save_gif_with_pillow(frames, output_path, fps)
-    elif temp_mp4_path.exists():
+    if temp_mp4_path.exists():
         temp_mp4_path.replace(output_path)
 
 
@@ -153,7 +122,8 @@ async def capture_frames_server_driven(
     are saved as per-frame files in a directory. In-memory PNG/SVG capture
     returns ``(frames, duration)`` without creating, modifying, or deleting
     filesystem output. ``hide_grid`` suppresses the SVG grid only in raster
-    screenshots and does not mutate the page's persistent styles.
+    screenshots and does not mutate the page's persistent styles. GIF output
+    requires a working FFmpeg installation.
     """
     output_format = output_format.lower()
     if fps <= 0:
@@ -177,6 +147,12 @@ async def capture_frames_server_driven(
         if (devtools) devtools.style.display = 'none';
         // Also hide any GSDevTools container elements
         document.querySelectorAll('[class*="gs-dev-tools"]').forEach(el => el.style.display = 'none');
+        // Stop wall-clock advancement. seekToFrame maps requested local times
+        // through tl_to_use.globalTime(...) so sibling GSAP animations advance
+        // coherently when the root timeline is available.
+        if (typeof gsap !== "undefined" && gsap.globalTimeline) {
+            gsap.globalTimeline.pause();
+        }
     }""")
 
     ## Locate the SVG element once.
@@ -279,7 +255,11 @@ async def capture_frames_server_driven(
 
             print(f"Video saved to {output_path}")
 
-        except (subprocess.SubprocessError, FileNotFoundError):
+        except (subprocess.SubprocessError, FileNotFoundError) as error:
+            if output_format == "gif":
+                raise RuntimeError(
+                    "GIF output requires a working FFmpeg installation"
+                ) from error
             print("ffmpeg not found, falling back to OpenCV encoding")
             # Fallback: read frames back and use OpenCV
             video_frames = []
@@ -294,13 +274,7 @@ async def capture_frames_server_driven(
                         background.paste(img)
                     img = background
                 video_frames.append(cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
-            create_video_from_frames(
-                video_frames,
-                output_path,
-                fps,
-                output_format,
-                use_ffmpeg=False,
-            )
+            create_video_from_frames(video_frames, output_path, fps, output_format)
             print(f"Video saved to {output_path} (OpenCV fallback)")
 
     finally:
@@ -527,6 +501,7 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         save_for_comparison (bool, optional): Whether to save rendered comparison data. Defaults to False.
         output_format (str, optional): Output format (mp4, gif, png, or svg). Defaults to "mp4".
             PNG and SVG formats write per-frame files to an output directory.
+            GIF output requires FFmpeg.
         video_fps (int, optional): Frames per second for video, frame output, and JSON sampling. Defaults to 30.
         print_console (bool, optional): Whether to print console and network messages. Defaults to False.
         comparison_properties (dict, optional): Property config for comparison recording.
@@ -550,7 +525,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--disable-easing", "-d", action="store_true", help="Set all GSAP tweens' easing to none")
     parser.add_argument("--save-keyframes", "-k", action="store_true", help="Save keyframes data to JSON")
     parser.add_argument("--save-for-comparison", "-c", action="store_true", help="Save rendered comparison data to JSON")
-    parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif", "png", "svg"], help="Output format for the animation: mp4, gif, png, or svg frame sequence (default: mp4)")
+    parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif", "png", "svg"], help="Output format for the animation: mp4, gif (requires FFmpeg), png, or svg frame sequence (default: mp4)")
     parser.add_argument("--video-fps", type=int, default=30, help="Frames per second for video, frame output, and JSON sampling (default: 30)")
     parser.add_argument("--print-console", "-pc", action="store_true", help="Print console and network messages from the browser (default: False)")
     parser.add_argument("--comparison-properties", type=str, default=None, help="JSON string of property config for comparison recording, e.g. '{\"spatial\": [\"transformedPts\", \"rotate\"], \"visual\": [\"opacity\"]}'")

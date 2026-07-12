@@ -138,6 +138,24 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
                 [page.svg_locator.png_bytes] * 2,
             )
 
+    @patch(
+        "mover.converter.mover_converter.subprocess.run",
+        side_effect=FileNotFoundError,
+    )
+    async def test_disk_gif_requires_ffmpeg(self, _mock_run) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "animation.gif"
+            with self.assertRaisesRegex(RuntimeError, "requires a working FFmpeg"):
+                await capture_frames_server_driven(
+                    page,
+                    str(output_path),
+                    fps=30,
+                    output_format="gif",
+                )
+            self.assertFalse(output_path.exists())
+
     async def test_hide_grid_uses_temporary_screenshot_style(self) -> None:
         page = FakePage()
 
@@ -198,50 +216,38 @@ class OutputNamingTest(unittest.TestCase):
         "mover.converter.mover_converter.subprocess.run",
         side_effect=FileNotFoundError,
     )
-    def test_gif_fallback_writes_a_real_animated_gif(self, _mock_run) -> None:
-        red_bgr = np.zeros((4, 4, 3), dtype=np.uint8)
-        red_bgr[:, :, 2] = 255
-        green_bgr = np.zeros((4, 4, 3), dtype=np.uint8)
-        green_bgr[:, :, 1] = 255
-
+    def test_gif_requires_ffmpeg_when_unavailable(self, _mock_run) -> None:
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "animation.gif"
-            create_video_from_frames(
-                [red_bgr, green_bgr],
-                str(output_path),
-                fps=5,
-                output_format="gif",
-            )
-
-            self.assertTrue(output_path.read_bytes().startswith(b"GIF"))
-            with Image.open(output_path) as gif:
-                self.assertEqual(gif.format, "GIF")
-                self.assertEqual(gif.n_frames, 2)
-                self.assertEqual(gif.info["duration"], 200)
+            with self.assertRaisesRegex(RuntimeError, "requires a working FFmpeg"):
+                create_video_from_frames(
+                    [frame],
+                    str(output_path),
+                    fps=5,
+                    output_format="gif",
+                )
+            self.assertFalse(output_path.exists())
 
     @patch("mover.converter.mover_converter.subprocess.run")
-    def test_gif_falls_back_when_ffmpeg_encoding_fails(self, mock_run) -> None:
+    def test_gif_reports_ffmpeg_encoding_failure(self, mock_run) -> None:
         mock_run.side_effect = [
             subprocess.CompletedProcess(["ffmpeg", "-version"], 0),
             subprocess.CalledProcessError(1, ["ffmpeg"]),
         ]
-        red_bgr = np.zeros((8, 8, 3), dtype=np.uint8)
-        red_bgr[:, :, 2] = 255
-        green_bgr = np.zeros((8, 8, 3), dtype=np.uint8)
-        green_bgr[:, :, 1] = 255
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "animation.gif"
-            create_video_from_frames(
-                [red_bgr, green_bgr],
-                str(output_path),
-                fps=5,
-                output_format="gif",
-            )
-
-            with Image.open(output_path) as gif:
-                self.assertEqual(gif.format, "GIF")
-                self.assertEqual(gif.n_frames, 2)
+            with self.assertRaisesRegex(RuntimeError, "GIF palette support"):
+                create_video_from_frames(
+                    [frame],
+                    str(output_path),
+                    fps=5,
+                    output_format="gif",
+                )
+            self.assertFalse(output_path.exists())
+            self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
 
     @patch("mover.converter.mover_converter.subprocess.run")
     def test_mp4_falls_back_when_ffmpeg_encoding_fails(self, mock_run) -> None:
