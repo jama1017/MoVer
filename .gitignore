@@ -22,6 +22,8 @@ tests/*
 !tests/test_mover_synthesizer.py
 !tests/test_mover_fol_generator.py
 !tests/test_prompt_generation.py
+!tests/test_converter_capture.py
+!tests/test_converter_dom.py
 
 ## Outputs
 example_output/

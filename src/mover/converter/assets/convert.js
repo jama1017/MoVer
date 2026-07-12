@@ -68,22 +68,22 @@ function getAnimationInfo(fps = 60) {
     const INFINITE_THRESHOLD = 1000000;
     let animDuration = tl_to_use.totalDuration();
     console.log("Timeline total duration:", animDuration);
-    
+
     if (!isFinite(animDuration) || animDuration > INFINITE_THRESHOLD) {
         console.warn("Detected infinite timeline (duration > 1M seconds), calculating single cycle duration...");
         const children = tl_to_use.getChildren();
         let maxEndTime = 0;
-        
+
         children.forEach(child => {
             const childStart = child.startTime();
             const childDuration = child.duration();
             const baseEnd = childStart + childDuration;
-            
+
             if (isFinite(baseEnd) && baseEnd > maxEndTime) {
                 maxEndTime = baseEnd;
             }
         });
-        
+
         if (maxEndTime > 0 && maxEndTime < INFINITE_THRESHOLD) {
             animDuration = maxEndTime;
             console.log("Calculated single cycle duration:", animDuration);
@@ -92,7 +92,7 @@ function getAnimationInfo(fps = 60) {
             console.warn("Could not calculate cycle duration, falling back to 10 seconds");
         }
     }
-    
+
     const steps = Math.ceil(animDuration * sampleFps);
     return { animDuration, fps: sampleFps, steps };
 }
@@ -116,8 +116,280 @@ function getSvgDimensions() {
 // Seek timeline to a specific frame index. Returns true if successful.
 function seekToFrame(frameIndex, fps, animDuration) {
     const seekTime = getSeekTime(frameIndex, fps, animDuration);
+    return seekToTime(seekTime);
+}
+
+function seekToTime(seekTime) {
+    if (!Number.isFinite(seekTime)) {
+        throw new TypeError("seekTime must be a finite number");
+    }
+
     tl_to_use.seek(seekTime, false);
     tl_to_use.pause();
+    return true;
+}
+
+function captureGsapAnimationState(animation) {
+    if (!animation) {
+        return null;
+    }
+    const usesTotalTime = typeof animation.totalTime === "function";
+    const time = usesTotalTime
+        ? animation.totalTime()
+        : (typeof animation.time === "function" ? animation.time() : null);
+    return {
+        animation,
+        time,
+        usesTotalTime,
+        paused: (
+            typeof animation.paused === "function"
+                ? animation.paused()
+                : null
+        ),
+        timeScale: (
+            typeof animation.timeScale === "function"
+                ? animation.timeScale()
+                : null
+        ),
+    };
+}
+
+function restoreGsapAnimationState(state) {
+    if (!state) {
+        return;
+    }
+    const { animation, time, usesTotalTime, paused, timeScale } = state;
+    animation.pause();
+    if (timeScale !== null) {
+        animation.timeScale(timeScale);
+    }
+    if (time !== null) {
+        if (usesTotalTime) {
+            animation.totalTime(time, true);
+        } else {
+            animation.time(time, true);
+        }
+    }
+    if (paused !== null && typeof animation.paused === "function") {
+        animation.paused(paused);
+    }
+}
+
+function uniquifySvgResourceIds(svg, prefix) {
+    const map = new Map();
+    const resourceTags = new Set([
+        "lineargradient",
+        "radialgradient",
+        "filter",
+        "clippath",
+        "mask",
+        "pattern",
+        "marker",
+        "symbol",
+    ]);
+    const elements = [svg, ...svg.querySelectorAll("*")];
+
+    elements
+        .filter(element => (
+            element.id && (
+                element.closest("defs")
+                || resourceTags.has(element.tagName.toLowerCase())
+            )
+        ))
+        .forEach(element => {
+            const oldId = element.id;
+            const newId = `${prefix}_${oldId}`;
+            map.set(oldId, newId);
+            element.id = newId;
+        });
+
+    const rewriteReferences = value => {
+        let rewritten = value;
+        for (const [oldId, newId] of map) {
+            const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            rewritten = rewritten.replace(
+                new RegExp(
+                    `url\\(\\s*(['"]?)[^'")]*#${escapedId}\\1\\s*\\)`,
+                    "g",
+                ),
+                (_match, quote) => `url(${quote}#${newId}${quote})`,
+            );
+            if (rewritten === `#${oldId}`) {
+                rewritten = `#${newId}`;
+            }
+        }
+        return rewritten;
+    };
+
+    elements.forEach(element => {
+        for (const attr of element.getAttributeNames()) {
+            element.setAttribute(
+                attr,
+                rewriteReferences(element.getAttribute(attr)),
+            );
+        }
+    });
+    svg.querySelectorAll("style").forEach(styleElement => {
+        let css = rewriteReferences(styleElement.textContent);
+        for (const [oldId, newId] of map) {
+            const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            css = css.replace(
+                new RegExp(`#${escapedId}(?![\\w-])`, "g"),
+                `#${newId}`,
+            );
+        }
+        styleElement.textContent = css;
+    });
+}
+
+function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
+    let info = getAnimationInfo();
+    let times = []
+    for (let i = 0; i < info.steps; i++) {
+        times.push(
+            info.animDuration * i / info.steps
+        );
+    }
+    return seekAndAppendToDomUsingTimes(times, frameSize, hideGrid)
+}
+
+const MOVER_BATCH_FRAME_ATTRIBUTE = "data-mover-batch-frame";
+let moverBatchCaptureState = null;
+
+function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
+    if (!Array.isArray(seekTimes)) {
+        throw new TypeError("seekTimes must be an array");
+    }
+    if (!seekTimes.every(time => Number.isFinite(time))) {
+        throw new TypeError("seekTimes must contain only finite numbers");
+    }
+    if (!Number.isInteger(frameSize) || frameSize <= 0) {
+        throw new TypeError("frameSize must be a positive integer");
+    }
+    if (typeof hideGrid !== "boolean") {
+        throw new TypeError("hideGrid must be a boolean");
+    }
+    if (!document.documentElement || !document.body) {
+        throw new Error("Cannot append frames without a document root and body");
+    }
+    if (typeof tl_to_use === "undefined" || !tl_to_use
+        || typeof tl_to_use.seek !== "function" || typeof tl_to_use.pause !== "function") {
+        throw new Error("Animation timeline is not initialized");
+    }
+
+    const srcSvg = document.querySelector("body > svg");
+    if (!srcSvg) {
+        throw new Error("No direct child SVG element found");
+    }
+    if (moverBatchCaptureState !== null) {
+        throw new Error("Batch frames are already appended; call resetSeekAndAppend first");
+    }
+    if (seekTimes.length === 0) {
+        return 0;
+    }
+
+    const root = document.documentElement;
+    const body = document.body;
+    const hiddenElements = Array.from(body.children)
+        .filter(element => element.tagName !== "SCRIPT")
+        .map(element => ({
+            element,
+            style: element.getAttribute("style"),
+        }));
+    moverBatchCaptureState = {
+        root,
+        rootStyle: root.getAttribute("style"),
+        body,
+        bodyStyle: body.getAttribute("style"),
+        hiddenElements,
+        timelineState: captureGsapAnimationState(tl_to_use),
+        frames: [],
+    };
+
+    try {
+        root.style.setProperty("margin", "0", "important");
+        root.style.setProperty("padding", "0", "important");
+        body.style.setProperty("margin", "0", "important");
+        body.style.setProperty("padding", "0", "important");
+        body.style.setProperty("display", "block", "important");
+
+        for (let i = 0; i < seekTimes.length; i++) {
+            seekToTime(seekTimes[i]);
+
+            const wrapper = document.createElement("div");
+            const svgCopy = srcSvg.cloneNode(true);
+            uniquifySvgResourceIds(svgCopy, `mover_frame_${i}`);
+
+            wrapper.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
+            wrapper.setAttribute("data-mover-frame-size", String(frameSize));
+            wrapper.style.setProperty("width", `${frameSize}px`, "important");
+            wrapper.style.setProperty("height", `${frameSize}px`, "important");
+            wrapper.style.setProperty("overflow", "hidden", "important");
+            wrapper.style.setProperty("display", "block", "important");
+            wrapper.style.setProperty("margin", "0", "important");
+            wrapper.style.setProperty("padding", "0", "important");
+            wrapper.style.setProperty("border", "0", "important");
+            wrapper.style.setProperty("box-sizing", "border-box", "important");
+
+            svgCopy.classList.remove("svg-width-fit-preview-target");
+            svgCopy.style.setProperty("width", `${frameSize}px`, "important");
+            svgCopy.style.setProperty("height", `${frameSize}px`, "important");
+            svgCopy.style.setProperty("display", "block", "important");
+            if (hideGrid) {
+                svgCopy.style.setProperty(
+                    "background-image",
+                    "none",
+                    "important",
+                );
+            }
+
+            wrapper.appendChild(svgCopy);
+            moverBatchCaptureState.frames.push(wrapper);
+            body.appendChild(wrapper);
+        }
+        hiddenElements.forEach(({ element }) => {
+            element.style.setProperty("display", "none", "important");
+        });
+    } catch (error) {
+        resetSeekAndAppend();
+        throw error;
+    }
+
+    return moverBatchCaptureState.frames.length;
+}
+
+function resetSeekAndAppend() {
+    const state = moverBatchCaptureState;
+    moverBatchCaptureState = null;
+
+    if (!state) {
+        document.querySelectorAll(`body > [${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
+            .forEach(frame => frame.remove());
+        return false;
+    }
+
+    state.frames.forEach(frame => frame.remove());
+    state.hiddenElements.forEach(({ element, style }) => {
+        if (style === null) {
+            element.removeAttribute("style");
+        } else {
+            element.setAttribute("style", style);
+        }
+    });
+
+    if (state.bodyStyle === null) {
+        state.body.removeAttribute("style");
+    } else {
+        state.body.setAttribute("style", state.bodyStyle);
+    }
+    if (state.rootStyle === null) {
+        state.root.style.cssText = "";
+        state.root.removeAttribute("style");
+    } else {
+        state.root.setAttribute("style", state.rootStyle);
+    }
+    restoreGsapAnimationState(state.timelineState);
+
     return true;
 }
 
@@ -168,7 +440,7 @@ function convertToKeyframes(allElems) {
                 // Remove duplicates and sort keyframe times
                 elementData[tween_type].keyframes = [...new Set(elementData[tween_type].tempTimes)].sort((a, b) => a - b)
                 delete elementData[tween_type].tempTimes // Clean up temporary array
-                
+
                 // For each keyframe time, seek timeline and record data
                 elementData[tween_type].keyframes.forEach(time => {
                     tl_to_use.seek(time, false).pause()
@@ -180,7 +452,7 @@ function convertToKeyframes(allElems) {
                     // Record transformedPts for all tween types
                     let transformedPts = getTransformedAABB(elem)
                     elementData[tween_type].transformedPts.push(transformedPts)
-                    
+
                     // Record accumulated value based on tween type
                     let analyzedResult = analyzeFrameMatrixAPI(elem)
                     switch (tween_type) {
@@ -249,7 +521,7 @@ function getAllTransformationValues(animatedElems, fps = 60) {
 
             let elemName = elem.id
             let currElemData = res[elemName]
-            
+
             currElemData["transformedPts"] = currElemData["transformedPts"] || [];
             currElemData["transformedPts"].push(getTransformedAABB(elem));
             currElemData["CTM"] = currElemData["CTM"] || [];
@@ -301,7 +573,7 @@ function analyzeFrameMatrixAPI(elem) {
     res["rotate_acc"] = gsap.getProperty(elem, "rotate")
     res["skewX_acc"] = gsap.getProperty(elem, "skewX")
     res["skewY_acc"] = gsap.getProperty(elem, "skewY")
-        
+
     // transform origin
     res["originInput"] = elem._gsap.origin
     res["originIsAbsolute"] = elem._gsap.originIsAbsolute
@@ -329,7 +601,7 @@ function analyzeFrameMatrixAPI(elem) {
 function compute_diff_acc(anim_data) {
     console.log("Computing diff and acc...")
     let steps = anim_data["info"]["steps"]
-    
+
     for (var element_id in anim_data) {
         if (element_id == 'info') {
             continue
@@ -431,20 +703,20 @@ function createObjectList(animatedElems, non_animatedElems) {
                     elem_data["shape"] = "rectangle"
                 }
                 break;
-                
+
             case "circle":
                 let diameter = parseFloat(elem.getAttribute("r")) * 2
                 var elem_size = [diameter, diameter]
                 elem_data["size"] = elem_size;
                 elem_data["shape"] = "circle"
                 break;
-            
+
             case "path":
                 if (elem.id.includes("letter")) {
                     elem_data["shape"] = elem.id.split("-")[1]
                 }
                 break;
-            
+
             case "defs":
                 continue;
         }
@@ -460,7 +732,7 @@ function createObjectList(animatedElems, non_animatedElems) {
         }
 
         objectData.push(elem_data)
-    }        
+    }
     return objectData
 }
 
@@ -596,7 +868,7 @@ function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
             }
         }
     }
-    
+
     return results;
 }
 
@@ -721,7 +993,7 @@ function createRenderedData(allElems, registry, propertyConfig = null, fps = 60)
 
     // Reset timeline to start
     tl_to_use.seek(0, false).pause();
-    
+
     return res;
 }
 
