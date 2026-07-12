@@ -7,7 +7,7 @@ name = "mover"
 version = "0.1.5"
 description = "Official implementation of MoVer: Motion Verification for Motion Graphics Animations"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [
     { name = "Jiaju Ma", email = "jiajuma@stanford.edu" },
@@ -29,7 +29,7 @@ dependencies = [
     "openai",
     "opencv-contrib-python==4.11.0.86",
     "Pillow",
-    "playwright>=1.41",
+    "playwright",
     "protobuf",
     "PyYAML",
     "treelib",
@@ -46,7 +46,7 @@ Repository = "https://github.com/jama1017/MoVer"
 "Bug Tracker" = "https://github.com/jama1017/MoVer/issues"
 
 [tool.setuptools]
-package-dir = { "" = "src" }
+package-dir = {"" = "src"}
 include-package-data = false
 
 [tool.setuptools.packages.find]
@@ -80,7 +80,5 @@ dev = [
 [project.optional-dependencies]
 local = [
     "ollama-python",
-    # vLLM is CUDA/Linux-only. Newer releases install opencv-python-headless,
-    # which conflicts with the project's opencv-contrib-python package.
-    "vllm==0.5.5; python_version < '3.13' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "vllm",
 ]
