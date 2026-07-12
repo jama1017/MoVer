@@ -1,0 +1,223 @@
+import io
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
+from PIL import Image
+
+from mover.converter.mover_converter import (
+    HIDE_GRID_SCREENSHOT_STYLE,
+    _get_animation_output_path,
+    capture_frames_server_driven,
+    create_video_from_frames,
+    parse_args,
+)
+
+
+def make_png_bytes() -> bytes:
+    output = io.BytesIO()
+    Image.new("RGBA", (2, 1), (64, 128, 255, 32)).save(output, format="PNG")
+    return output.getvalue()
+
+
+class FakeSvgLocator:
+    def __init__(self, png_bytes: bytes) -> None:
+        self.first = self
+        self.png_bytes = png_bytes
+        self.screenshot_calls: list[dict] = []
+
+    async def wait_for(self, **kwargs) -> None:
+        return None
+
+    async def screenshot(self, **kwargs) -> bytes:
+        self.screenshot_calls.append(kwargs)
+        return self.png_bytes
+
+
+class FakePage:
+    def __init__(self) -> None:
+        self.svg_locator = FakeSvgLocator(make_png_bytes())
+        self.evaluate_calls: list[tuple[str, object | None]] = []
+
+    def locator(self, selector: str) -> FakeSvgLocator:
+        if selector != "svg":
+            raise AssertionError(f"Unexpected locator: {selector}")
+        return self.svg_locator
+
+    async def evaluate(self, expression: str, argument=None):
+        self.evaluate_calls.append((expression, argument))
+        if expression == "fps => getAnimationInfo(fps)":
+            return {"animDuration": 1.25, "steps": 1}
+        if "XMLSerializer" in expression:
+            return '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+        return None
+
+
+class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
+    async def test_in_memory_png_returns_frames_and_duration_without_disk_io(self) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "missing" / "frames"
+            frames, duration = await capture_frames_server_driven(
+                page,
+                str(output_path),
+                fps=30,
+                output_format="png",
+                in_memory=True,
+            )
+
+            self.assertEqual(duration, 1.25)
+            self.assertEqual(len(frames), 2)
+            self.assertFalse(output_path.parent.exists())
+            self.assertEqual(page.svg_locator.screenshot_calls, [{"type": "png"}] * 2)
+            for frame in frames:
+                self.assertIsInstance(frame, np.ndarray)
+                self.assertEqual(frame.shape, (1, 2, 4))
+                self.assertEqual(frame.dtype, np.float32)
+
+    async def test_in_memory_svg_matches_disk_text_without_disk_io(self) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "missing" / "frames"
+            frames, duration = await capture_frames_server_driven(
+                page,
+                str(output_path),
+                fps=30,
+                output_format="svg",
+                in_memory=True,
+            )
+
+            self.assertEqual(duration, 1.25)
+            self.assertEqual(len(frames), 2)
+            self.assertFalse(output_path.parent.exists())
+            self.assertEqual(page.svg_locator.screenshot_calls, [])
+            for frame in frames:
+                self.assertIsInstance(frame, io.StringIO)
+                self.assertEqual(
+                    frame.getvalue(),
+                    '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
+                )
+
+    async def test_in_memory_video_is_rejected_before_browser_or_disk_work(self) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "missing" / "animation.mp4"
+            with self.assertRaisesRegex(ValueError, "only supported for PNG and SVG"):
+                await capture_frames_server_driven(
+                    page,
+                    str(output_path),
+                    output_format="mp4",
+                    in_memory=True,
+                )
+
+            self.assertEqual(page.evaluate_calls, [])
+            self.assertFalse(output_path.parent.exists())
+
+    async def test_disk_png_uses_element_screenshot_bytes(self) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "frames"
+            result = await capture_frames_server_driven(
+                page,
+                str(output_path),
+                fps=30,
+                output_format="png",
+            )
+
+            self.assertIsNone(result)
+            self.assertEqual(page.svg_locator.screenshot_calls, [{"type": "png"}] * 2)
+            self.assertEqual(
+                sorted(path.read_bytes() for path in output_path.glob("frame_*.png")),
+                [page.svg_locator.png_bytes] * 2,
+            )
+
+    async def test_hide_grid_uses_temporary_screenshot_style(self) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "missing" / "frames"
+            frames, duration = await capture_frames_server_driven(
+                page,
+                str(output_path),
+                output_format="png",
+                in_memory=True,
+                hide_grid=True,
+            )
+
+            self.assertEqual(duration, 1.25)
+            self.assertEqual(len(frames), 2)
+            self.assertFalse(output_path.parent.exists())
+            self.assertEqual(
+                page.svg_locator.screenshot_calls,
+                [
+                    {"type": "png", "style": HIDE_GRID_SCREENSHOT_STYLE},
+                    {"type": "png", "style": HIDE_GRID_SCREENSHOT_STYLE},
+                ],
+            )
+
+
+class OutputNamingTest(unittest.TestCase):
+    def test_video_names_remain_legacy_compatible(self) -> None:
+        self.assertEqual(
+            _get_animation_output_path("/tmp/output", "example", "mp4", 60),
+            Path("/tmp/output/example_animation.mp4"),
+        )
+        self.assertEqual(
+            _get_animation_output_path("/tmp/output", "example", "GIF", 24),
+            Path("/tmp/output/example_animation.gif"),
+        )
+
+    def test_frame_directories_include_fps(self) -> None:
+        self.assertEqual(
+            _get_animation_output_path("/tmp/output", "example", "png", 30),
+            Path("/tmp/output/example_animation_30_png"),
+        )
+        self.assertEqual(
+            _get_animation_output_path("/tmp/output", "example", "SVG", 12),
+            Path("/tmp/output/example_animation_12_svg"),
+        )
+
+    def test_unsupported_output_name_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported output format"):
+            _get_animation_output_path("/tmp/output", "example", "webm", 30)
+
+    def test_hide_grid_cli_flag_defaults_off_and_can_be_enabled(self) -> None:
+        with patch("sys.argv", ["mover-converter", "example.html", "0"]):
+            self.assertFalse(parse_args().hide_grid)
+        with patch("sys.argv", ["mover-converter", "example.html", "0", "--hide-grid"]):
+            self.assertTrue(parse_args().hide_grid)
+
+    @patch(
+        "mover.converter.mover_converter.subprocess.run",
+        side_effect=FileNotFoundError,
+    )
+    def test_gif_fallback_writes_a_real_animated_gif(self, _mock_run) -> None:
+        red_bgr = np.zeros((4, 4, 3), dtype=np.uint8)
+        red_bgr[:, :, 2] = 255
+        green_bgr = np.zeros((4, 4, 3), dtype=np.uint8)
+        green_bgr[:, :, 1] = 255
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "animation.gif"
+            create_video_from_frames(
+                [red_bgr, green_bgr],
+                str(output_path),
+                fps=5,
+                output_format="gif",
+            )
+
+            self.assertTrue(output_path.read_bytes().startswith(b"GIF"))
+            with Image.open(output_path) as gif:
+                self.assertEqual(gif.format, "GIF")
+                self.assertEqual(gif.n_frames, 2)
+                self.assertEqual(gif.info["duration"], 200)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -129,30 +129,49 @@ function seekToTime(seekTime) {
 
 function uniquifySvgIds(svg, prefix) {
   const map = new Map();
+  const idElements = [];
 
-  svg.querySelectorAll("[id]").forEach(el => {
+  if (svg.id) {
+    idElements.push(svg);
+  }
+  idElements.push(...svg.querySelectorAll("[id]"));
+
+  idElements.forEach(el => {
     const oldId = el.id;
     const newId = `${prefix}_${oldId}`;
     map.set(oldId, newId);
     el.id = newId;
   });
 
-  svg.querySelectorAll("*").forEach(el => {
+  [svg, ...svg.querySelectorAll("*")].forEach(el => {
     for (const attr of el.getAttributeNames()) {
       let value = el.getAttribute(attr);
 
       for (const [oldId, newId] of map) {
-        value = value
-          .replaceAll(`url(#${oldId})`, `url(#${newId})`)
-          .replaceAll(`#${oldId}`, `#${newId}`);
+        value = value.replaceAll(`url(#${oldId})`, `url(#${newId})`);
+        if (value === `#${oldId}`) {
+          value = `#${newId}`;
+        }
       }
 
       el.setAttribute(attr, value);
     }
   });
+
+  svg.querySelectorAll("style").forEach(styleElement => {
+    let css = styleElement.textContent;
+    for (const [oldId, newId] of map) {
+      const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      css = css.replace(
+        new RegExp(`#${escapedId}(?![\\w-])`, "g"),
+        `#${newId}`,
+      );
+    }
+    styleElement.textContent = css;
+  });
 }
 
-function seekAndAppendToDom() {
+function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
     let info = getAnimationInfo();
     let times = []
     for (let i = 0; i < info.steps; i++) {
@@ -160,47 +179,131 @@ function seekAndAppendToDom() {
             info.animDuration * i / info.steps
         );
     }
-    seekAndAppendToDomUsingTimes(times)
+    return seekAndAppendToDomUsingTimes(times, frameSize, hideGrid)
 }
 
-function seekAndAppendToDomUsingTimes(seekTimes) {
-    for (let i = 0; i < seekTimes.length; i++) {
-        tl_to_use.seek(seekTimes[i], false);
-        tl_to_use.pause();
-        const srcSvg = document.querySelector("body > svg");
-        const wrapper = document.createElement("div");
-        const svgCopy = srcSvg.cloneNode(true);
-        uniquifySvgIds(svgCopy, "timestamp_"+seekTimes[i]);
-        wrapper.appendChild(svgCopy);
+const MOVER_BATCH_FRAME_ATTRIBUTE = "data-mover-batch-frame";
+let moverBatchCaptureState = null;
 
-        wrapper.appendChild(svgCopy);
-        document.body.appendChild(wrapper);
-
-        wrapper.style.width = "128px";
-        wrapper.style.height = "128px";
-        wrapper.style.overflow = "hidden";
-
-        svgCopy.classList.remove("svg-width-fit-preview-target");
-
-        svgCopy.style.setProperty("width", "128px", "important");
-        svgCopy.style.setProperty("height", "128px", "important");
-        svgCopy.style.setProperty("display", "block", "important");
+function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
+    if (!Array.isArray(seekTimes)) {
+        throw new TypeError("seekTimes must be an array");
     }
-    // visibility:hidden removes the element from rendering but keeps its
-    // layout space, so the wrappers were getting pushed down ~96px (the SVG's
-    // displayed height at 128 wide @ 4:3 aspect). Use display:none so the
-    // wrapper grid actually starts at row 0 of the body — without this the
-    // browser_pool chunker (which slices at i*128) reads the wrong rows and
-    // every captured frame is offset in Y.
-    document.querySelector("body > svg").style.setProperty("display", "none", "important");
-    document.querySelector("body > br").style.setProperty("display", "none");
-    document.querySelector("body").style.setProperty("padding", "0", "important");
+    if (!seekTimes.every(time => Number.isFinite(time))) {
+        throw new TypeError("seekTimes must contain only finite numbers");
+    }
+    if (!Number.isInteger(frameSize) || frameSize <= 0) {
+        throw new TypeError("frameSize must be a positive integer");
+    }
+    if (typeof hideGrid !== "boolean") {
+        throw new TypeError("hideGrid must be a boolean");
+    }
+    if (!document.body) {
+        throw new Error("Cannot append frames without a document body");
+    }
+    if (typeof tl_to_use === "undefined" || !tl_to_use
+        || typeof tl_to_use.seek !== "function" || typeof tl_to_use.pause !== "function") {
+        throw new Error("Animation timeline is not initialized");
+    }
+
+    const srcSvg = document.querySelector("body > svg");
+    if (!srcSvg) {
+        throw new Error("No direct child SVG element found");
+    }
+    if (moverBatchCaptureState !== null) {
+        throw new Error("Batch frames are already appended; call resetSeekAndAppend first");
+    }
+    if (seekTimes.length === 0) {
+        return 0;
+    }
+
+    const body = document.body;
+    const hiddenElements = Array.from(body.children)
+        .filter(element => element.tagName !== "SCRIPT")
+        .map(element => ({
+            element,
+            style: element.getAttribute("style"),
+        }));
+
+    moverBatchCaptureState = {
+        body,
+        bodyStyle: body.getAttribute("style"),
+        hiddenElements,
+        wrappers: [],
+    };
+
+    try {
+        hiddenElements.forEach(({ element }) => {
+            element.style.setProperty("display", "none", "important");
+        });
+        body.style.setProperty("margin", "0", "important");
+        body.style.setProperty("padding", "0", "important");
+
+        for (let i = 0; i < seekTimes.length; i++) {
+            tl_to_use.seek(seekTimes[i], false);
+            tl_to_use.pause();
+
+            const wrapper = document.createElement("div");
+            const svgCopy = srcSvg.cloneNode(true);
+            uniquifySvgIds(svgCopy, `mover_frame_${i}`);
+
+            wrapper.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
+            wrapper.setAttribute("data-mover-frame-size", String(frameSize));
+            wrapper.style.width = `${frameSize}px`;
+            wrapper.style.height = `${frameSize}px`;
+            wrapper.style.overflow = "hidden";
+            wrapper.style.display = "block";
+            wrapper.style.margin = "0";
+            wrapper.style.padding = "0";
+            wrapper.style.border = "0";
+            wrapper.style.boxSizing = "border-box";
+
+            svgCopy.classList.remove("svg-width-fit-preview-target");
+            svgCopy.style.setProperty("width", `${frameSize}px`, "important");
+            svgCopy.style.setProperty("height", `${frameSize}px`, "important");
+            svgCopy.style.setProperty("display", "block", "important");
+            if (hideGrid) {
+                svgCopy.style.setProperty("background-image", "none", "important");
+            }
+
+            wrapper.appendChild(svgCopy);
+            moverBatchCaptureState.wrappers.push(wrapper);
+            body.appendChild(wrapper);
+        }
+    } catch (error) {
+        resetSeekAndAppend();
+        throw error;
+    }
+
+    return moverBatchCaptureState.wrappers.length;
 }
 
 function resetSeekAndAppend() {
-    document.querySelector("body > svg").style.removeProperty("display");
-    document.querySelectorAll("body > div").forEach(d => d.remove());
+    const state = moverBatchCaptureState;
+    moverBatchCaptureState = null;
 
+    if (!state) {
+        document.querySelectorAll(`body > [${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
+            .forEach(wrapper => wrapper.remove());
+        return false;
+    }
+
+    state.wrappers.forEach(wrapper => wrapper.remove());
+    state.hiddenElements.forEach(({ element, style }) => {
+        if (style === null) {
+            element.removeAttribute("style");
+        } else {
+            element.setAttribute("style", style);
+        }
+    });
+
+    if (state.bodyStyle === null) {
+        state.body.removeAttribute("style");
+    } else {
+        state.body.setAttribute("style", state.bodyStyle);
+    }
+
+    return true;
 }
 
 
@@ -810,7 +913,7 @@ function createRenderedData(allElems, registry, propertyConfig = null, fps = 60)
 function convertAnimatedPropertiesToJson(registry=null, comparisonPropertyConfig = null) {
     tl_to_use.totalProgress(1);
     tl_to_use.totalProgress(0);
-    return animatedProps = extractAnimatedProperties(svgRef, registry);
+    return extractAnimatedProperties(svgRef, registry);
 
 }
 

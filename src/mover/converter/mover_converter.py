@@ -1,5 +1,4 @@
 import io
-import os
 import json
 import asyncio
 import argparse
@@ -22,6 +21,22 @@ import uvicorn
 VIDEO_OUTPUT_FORMATS = {"mp4", "gif"}
 FRAME_OUTPUT_FORMATS = {"png", "svg"}
 SUPPORTED_OUTPUT_FORMATS = VIDEO_OUTPUT_FORMATS | FRAME_OUTPUT_FORMATS
+HIDE_GRID_SCREENSHOT_STYLE = "svg { background-image: none !important; }"
+
+
+def _get_animation_output_path(
+    output_dir: str | Path,
+    base_name: str,
+    output_format: str,
+    fps: int,
+) -> Path:
+    """Build an output path while preserving established naming contracts."""
+    normalized_format = output_format.lower()
+    if normalized_format in FRAME_OUTPUT_FORMATS:
+        return Path(output_dir) / f"{base_name}_animation_{fps}_{normalized_format}"
+    if normalized_format in VIDEO_OUTPUT_FORMATS:
+        return Path(output_dir) / f"{base_name}_animation.{normalized_format}"
+    raise ValueError(f"Unsupported output format: {normalized_format}")
 
 
 def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: int = 30, output_format: str = "mp4") -> None:
@@ -30,26 +45,53 @@ def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: in
         raise ValueError("No frames provided")
     if output_format not in VIDEO_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported video output format: {output_format}")
-    
+
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        ffmpeg_available = True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        ffmpeg_available = False
+
+    if output_format == "gif" and not ffmpeg_available:
+        gif_frames = []
+        for frame in frames:
+            if frame.ndim == 2:
+                gif_frame = Image.fromarray(frame).convert("RGB")
+            elif frame.shape[2] == 4:
+                gif_frame = Image.fromarray(
+                    cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
+                )
+            else:
+                gif_frame = Image.fromarray(
+                    cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                )
+            gif_frames.append(gif_frame)
+
+        gif_frames[0].save(
+            output_path,
+            format="GIF",
+            save_all=True,
+            append_images=gif_frames[1:],
+            duration=max(1, round(1000 / fps)),
+            loop=0,
+        )
+        return
+
     height, width = frames[0].shape[:2]
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    
+
     ## Always create MP4 first
     temp_mp4_path = Path(output_path).with_suffix('.temp.mp4')
     out = cv2.VideoWriter(str(temp_mp4_path), fourcc, fps, (width, height))
-    
+
     try:
         for frame in frames:
             out.write(frame)
     finally:
         out.release()
 
-    ## Check if ffmpeg is available
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        
+    if ffmpeg_available:
         if output_format == "gif":
-            ## Convert MP4 to GIF with optimized palette
             subprocess.run([
                 'ffmpeg', '-y',
                 '-i', str(temp_mp4_path),
@@ -70,9 +112,8 @@ def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: in
                 str(output_path)
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             temp_mp4_path.unlink()
-    except (subprocess.SubprocessError, FileNotFoundError):
+    else:
         print("ffmpeg not found, skipping conversion step")
-        ## If ffmpeg fails, just rename the temp file
         if temp_mp4_path.exists():
             temp_mp4_path.rename(output_path)
 
@@ -83,21 +124,27 @@ async def capture_frames_server_driven(
     fps: int = 30,
     output_format: str = "mp4",
     in_memory: bool = False,
-) -> None | list[io.FileIO]:
+    hide_grid: bool = False,
+) -> None | tuple[list[np.ndarray | io.StringIO], float]:
     """
     Server-driven frame capture: Python controls the timeline and screenshots.
     Video/GIF frames are streamed through a temp directory; PNG/SVG outputs
-    are saved as per-frame files in a directory.
+    are saved as per-frame files in a directory. In-memory PNG/SVG capture
+    returns ``(frames, duration)`` without creating, modifying, or deleting
+    filesystem output. ``hide_grid`` suppresses the SVG grid only in raster
+    screenshots and does not mutate the page's persistent styles.
     """
     output_format = output_format.lower()
     if fps <= 0:
         raise ValueError("fps must be positive")
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported output format: {output_format}")
+    if in_memory and output_format not in FRAME_OUTPUT_FORMATS:
+        raise ValueError("in_memory=True is only supported for PNG and SVG output")
 
     ## Get animation info from the page using the same FPS used for seeking.
     anim_info = await page.evaluate("fps => getAnimationInfo(fps)", fps)
-    duration = anim_info["animDuration"]
+    duration = float(anim_info["animDuration"])
     total_frames = anim_info["steps"]
     capture_frame_count = total_frames + 1
 
@@ -115,28 +162,24 @@ async def capture_frames_server_driven(
     svg_element = page.locator("svg").first
     await svg_element.wait_for(state="visible")
 
-    ## Extracting the SVG coordinates once speeds up screenshots
-    box = await svg_element.bounding_box()
-    clip = {"x": box["x"], "y": box["y"],
-            "width": box["width"], "height": box["height"], "scale": 1}
-
-    output_target = Path(output_path)
-    cleanup_temp_dir = output_format in VIDEO_OUTPUT_FORMATS
-    if cleanup_temp_dir:
-        output_target.parent.mkdir(parents=True, exist_ok=True)
-        frames_dir = Path(tempfile.mkdtemp(prefix="mover_frames_"))
-    else:
-        frames_dir = output_target
-        if frames_dir.suffix.lower() == f".{output_format}":
-            frames_dir = frames_dir.with_suffix("")
-        if frames_dir.exists() and not frames_dir.is_dir():
-            raise ValueError(f"Frame output path exists and is not a directory: {frames_dir}")
-        frames_dir.mkdir(parents=True, exist_ok=True)
-        for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
-            existing_frame.unlink()
-
-    if in_memory:
-        frames = []
+    in_memory_frames: list[np.ndarray | io.StringIO] = []
+    frames_dir: Path | None = None
+    cleanup_temp_dir = False
+    if not in_memory:
+        output_target = Path(output_path)
+        cleanup_temp_dir = output_format in VIDEO_OUTPUT_FORMATS
+        if cleanup_temp_dir:
+            output_target.parent.mkdir(parents=True, exist_ok=True)
+            frames_dir = Path(tempfile.mkdtemp(prefix="mover_frames_"))
+        else:
+            frames_dir = output_target
+            if frames_dir.suffix.lower() == f".{output_format}":
+                frames_dir = frames_dir.with_suffix("")
+            if frames_dir.exists() and not frames_dir.is_dir():
+                raise ValueError(f"Frame output path exists and is not a directory: {frames_dir}")
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
+                existing_frame.unlink()
 
     try:
         for frame_index in range(capture_frame_count):
@@ -153,17 +196,25 @@ async def capture_frames_server_driven(
                     return new XMLSerializer().serializeToString(svg);
                 }""")
                 if in_memory:
-                    frames.append(io.StringIO(svg_markup))
+                    in_memory_frames.append(io.StringIO(f"{svg_markup}\n"))
                 else:
+                    assert frames_dir is not None
                     frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
                     frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
             else:
-                png_bytes = await page.screenshot(type="png", clip=clip, full_page=True)
+                if hide_grid:
+                    png_bytes = await svg_element.screenshot(
+                        type="png",
+                        style=HIDE_GRID_SCREENSHOT_STYLE,
+                    )
+                else:
+                    png_bytes = await svg_element.screenshot(type="png")
 
                 if in_memory:
                     img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                    frames.append(np.asarray(img, dtype=np.float32) / 255.0)
+                    in_memory_frames.append(np.asarray(img, dtype=np.float32) / 255.0)
                 else:
+                    assert frames_dir is not None
                     frame_path = frames_dir / f"frame_{frame_index:06d}.png"
                     with open(frame_path, "wb") as f:
                         f.write(png_bytes)
@@ -171,14 +222,16 @@ async def capture_frames_server_driven(
             if (frame_index + 1) % max(1, capture_frame_count // 10) == 0 or frame_index == capture_frame_count - 1:
                 print(f"  Captured frame {frame_index + 1}/{capture_frame_count}")
 
-        if output_format in FRAME_OUTPUT_FORMATS and in_memory:
-            return frames, 0
+        if in_memory:
+            return in_memory_frames, duration
 
-        if output_format in FRAME_OUTPUT_FORMATS and not in_memory:
+        if output_format in FRAME_OUTPUT_FORMATS:
+            assert frames_dir is not None
             print(f"{output_format.upper()} frames saved to {frames_dir}")
             return
 
         ## Encode video using FFmpeg directly from image sequence.
+        assert frames_dir is not None
         try:
             subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
 
@@ -208,7 +261,7 @@ async def capture_frames_server_driven(
         except (subprocess.SubprocessError, FileNotFoundError):
             print("ffmpeg not found, falling back to OpenCV encoding")
             # Fallback: read frames back and use OpenCV
-            frames = []
+            video_frames = []
             for frame_index in range(capture_frame_count):
                 frame_path = frames_dir / f"frame_{frame_index:06d}.png"
                 img = Image.open(frame_path)
@@ -219,12 +272,12 @@ async def capture_frames_server_driven(
                     else:
                         background.paste(img)
                     img = background
-                frames.append(cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
-            create_video_from_frames(frames, output_path, fps, output_format)
+                video_frames.append(cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
+            create_video_from_frames(video_frames, output_path, fps, output_format)
             print(f"Video saved to {output_path} (OpenCV fallback)")
 
     finally:
-        if cleanup_temp_dir:
+        if cleanup_temp_dir and frames_dir is not None:
             shutil.rmtree(frames_dir, ignore_errors=True)
 
 
@@ -336,7 +389,7 @@ def _get_bound_port(server: uvicorn.Server) -> int:
     return sockets[0].getsockname()[1]
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
@@ -389,11 +442,19 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
                 output_label = f"{output_format.upper()} frames" if output_format in FRAME_OUTPUT_FORMATS else output_format.upper()
                 print(f"Creating {output_label}...")
                 video_out_dir = output_dir or html_dir
-                if output_format in FRAME_OUTPUT_FORMATS:
-                    output_path = str(Path(video_out_dir) / f"{base_name}_animation_{video_fps}_{output_format}")
-                else:
-                    output_path = str(Path(video_out_dir) / f"{base_name}_animation_{video_fps}.{output_format}")
-                await capture_frames_server_driven(page, output_path, video_fps, output_format)
+                output_path = _get_animation_output_path(
+                    video_out_dir,
+                    base_name,
+                    output_format,
+                    video_fps,
+                )
+                await capture_frames_server_driven(
+                    page,
+                    str(output_path),
+                    video_fps,
+                    output_format,
+                    hide_grid=hide_grid,
+                )
 
             await browser.close()
             
@@ -425,7 +486,7 @@ async def capture_json_animation(actual_port: int, comparison_properties: dict |
         print("Easing is disabled for all tweens.")
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create animation output.
     
@@ -447,8 +508,10 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         output_dir (str, optional): Directory to write output files to. None writes next to the HTML.
         save_animated_properties (bool, optional): Extract and save animated property names
             (registry names per element) to _properties.json. Defaults to False.
+        hide_grid (bool, optional): Hide the SVG grid in raster captures without
+            changing the interactive page styling. Defaults to False.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir, save_animated_properties))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir, save_animated_properties, hide_grid))
 
 
 def parse_args() -> argparse.Namespace:
@@ -466,6 +529,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--comparison-properties", type=str, default=None, help="JSON string of property config for comparison recording, e.g. '{\"spatial\": [\"transformedPts\", \"rotate\"], \"visual\": [\"opacity\"]}'")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory to write output files to (default: same directory as the HTML file)")
     parser.add_argument("--save-animated-properties", "-ap", action="store_true", help="Extract and save animated property names (registry names per element) to _properties.json")
+    parser.add_argument("--hide-grid", action="store_true", help="Hide the SVG grid in raster captures (default: False)")
     return parser.parse_args()
 
 
@@ -473,7 +537,7 @@ def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
     comp_props = json.loads(args.comparison_properties) if args.comparison_properties else None
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir, args.save_animated_properties)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir, args.save_animated_properties, args.hide_grid)
 
 
 if __name__ == "__main__":
