@@ -40,10 +40,27 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         await self.page.set_content(
             """<!doctype html>
             <style>
+                html, body {
+                    margin: 0;
+                    padding-left: 5px;
+                }
+                body {
+                    display: flex;
+                }
                 svg {
                     background-color: white;
                     background-image: linear-gradient(rgb(255, 0, 0), rgb(255, 0, 0));
                     background-repeat: no-repeat;
+                }
+                #shape {
+                    opacity: 0.5;
+                }
+                .shape-resource {
+                    fill: url("#paint");
+                }
+                #symbol .part {
+                    fill: rgb(0, 0, 255);
+                    opacity: 0.4;
                 }
             </style>
             <body style="padding: 3px 4px !important; background: white">
@@ -55,7 +72,12 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                             <stop stop-color="green"/>
                         </linearGradient>
                     </defs>
-                    <circle id="shape" cx="10" cy="10" r="3" fill="url(#paint)"/>
+                    <circle class="shape-resource" id="shape" cx="10" cy="10" r="3"/>
+                    <use id="shape-copy" href="#shape" x="4"/>
+                    <g id="symbol">
+                        <rect class="part" x="15" y="15" width="2" height="2"/>
+                    </g>
+                    <use id="symbol-copy" href="#symbol" x="8"/>
                 </svg>
                 <br id="break" style="display: block">
                 <div id="existing" style="display: flex !important">Keep me</div>
@@ -92,6 +114,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
     async def _snapshot_original_state(self) -> dict:
         return await self.page.evaluate(
             """() => ({
+                rootStyle: document.documentElement.getAttribute("style") || null,
                 bodyStyle: document.body.getAttribute("style"),
                 elements: Array.from(document.body.children)
                     .filter(element => element.tagName !== "SCRIPT")
@@ -102,8 +125,11 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             })"""
         )
 
-    async def _assert_reset_state(self) -> None:
-        self.assertEqual(await self._snapshot_original_state(), self.initial_state)
+    async def _assert_reset_state(self, expected_state: dict | None = None) -> None:
+        self.assertEqual(
+            await self._snapshot_original_state(),
+            expected_state or self.initial_state,
+        )
         self.assertEqual(
             await self.page.locator("body > [data-mover-batch-frame]").count(),
             0,
@@ -111,6 +137,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_frame_sizes_grid_control_ids_and_reset(self) -> None:
         await self.page.set_viewport_size({"width": 128, "height": 256})
+        expected_default_state = await self._snapshot_original_state()
         count = await self.page.evaluate(
             "seekAndAppendToDomUsingTimes([0, 0.5])"
         )
@@ -133,7 +160,14 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     backgroundImage: getComputedStyle(svg).backgroundImage,
                     rootId: svg.id,
                     paintId: svg.querySelector("linearGradient").id,
-                    fill: svg.querySelector("circle").getAttribute("fill"),
+                    shapeId: svg.querySelector("circle").id,
+                    shapeOpacity: getComputedStyle(svg.querySelector("circle")).opacity,
+                    fill: getComputedStyle(svg.querySelector("circle")).fill,
+                    useHref: svg.querySelector("use").getAttribute("href"),
+                    symbolId: svg.querySelector("g").id,
+                    symbolUseHref: svg.querySelector("#symbol-copy").getAttribute("href"),
+                    partFill: getComputedStyle(svg.querySelector(".part")).fill,
+                    partOpacity: getComputedStyle(svg.querySelector(".part")).opacity,
                     styleText: svg.querySelector("style").textContent,
                 };
             })"""
@@ -151,15 +185,41 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             [state["rootId"] for state in default_state],
-            ["mover_frame_0_source", "mover_frame_1_source"],
+            ["source", "source"],
         )
         self.assertEqual(
             [state["paintId"] for state in default_state],
             ["mover_frame_0_paint", "mover_frame_1_paint"],
         )
         self.assertEqual(
-            [state["fill"] for state in default_state],
-            ["url(#mover_frame_0_paint)", "url(#mover_frame_1_paint)"],
+            [state["shapeId"] for state in default_state],
+            ["mover_frame_0_shape", "mover_frame_1_shape"],
+        )
+        self.assertEqual(
+            [state["shapeOpacity"] for state in default_state],
+            ["0.5", "0.5"],
+        )
+        self.assertIn("#mover_frame_0_paint", default_state[0]["fill"])
+        self.assertIn("#mover_frame_1_paint", default_state[1]["fill"])
+        self.assertEqual(
+            [state["useHref"] for state in default_state],
+            ["#mover_frame_0_shape", "#mover_frame_1_shape"],
+        )
+        self.assertEqual(
+            [state["symbolId"] for state in default_state],
+            ["mover_frame_0_symbol", "mover_frame_1_symbol"],
+        )
+        self.assertEqual(
+            [state["symbolUseHref"] for state in default_state],
+            ["#mover_frame_0_symbol", "#mover_frame_1_symbol"],
+        )
+        self.assertEqual(
+            [state["partFill"] for state in default_state],
+            ["rgb(0, 0, 255)", "rgb(0, 0, 255)"],
+        )
+        self.assertEqual(
+            [state["partOpacity"] for state in default_state],
+            ["0.4", "0.4"],
         )
         self.assertEqual(
             [state["styleText"].strip() for state in default_state],
@@ -176,9 +236,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(screenshot.convert("RGB").getpixel((1, 1)), (255, 0, 0))
 
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
-        await self._assert_reset_state()
+        await self._assert_reset_state(expected_default_state)
 
         await self.page.set_viewport_size({"width": 512, "height": 1024})
+        expected_large_state = await self._snapshot_original_state()
         count = await self.page.evaluate(
             "seekAndAppendToDomUsingTimes([0.5, 0.5], 512, true)"
         )
@@ -214,7 +275,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             [state["rootId"] for state in large_state],
-            ["mover_frame_0_source", "mover_frame_1_source"],
+            ["source", "source"],
         )
 
         screenshot = Image.open(
@@ -224,7 +285,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(screenshot.convert("RGB").getpixel((1, 1)), (255, 255, 255))
 
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
-        await self._assert_reset_state()
+        await self._assert_reset_state(expected_large_state)
 
     async def test_invalid_options_and_seek_failure_do_not_mutate_page(self) -> None:
         for expression in (
@@ -243,9 +304,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 };
             }"""
         )
+        expected_failure_state = await self._snapshot_original_state()
         with self.assertRaisesRegex(Exception, "injected failure"):
             await self.page.evaluate("seekAndAppendToDomUsingTimes([0, 1])")
-        await self._assert_reset_state()
+        await self._assert_reset_state(expected_failure_state)
         self.assertFalse(await self.page.evaluate("resetSeekAndAppend()"))
 
     async def test_animated_property_conversion_does_not_leak_global(self) -> None:

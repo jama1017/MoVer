@@ -1,4 +1,5 @@
 import io
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -217,6 +218,50 @@ class OutputNamingTest(unittest.TestCase):
                 self.assertEqual(gif.format, "GIF")
                 self.assertEqual(gif.n_frames, 2)
                 self.assertEqual(gif.info["duration"], 200)
+
+    @patch("mover.converter.mover_converter.subprocess.run")
+    def test_gif_falls_back_when_ffmpeg_encoding_fails(self, mock_run) -> None:
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(["ffmpeg", "-version"], 0),
+            subprocess.CalledProcessError(1, ["ffmpeg"]),
+        ]
+        red_bgr = np.zeros((8, 8, 3), dtype=np.uint8)
+        red_bgr[:, :, 2] = 255
+        green_bgr = np.zeros((8, 8, 3), dtype=np.uint8)
+        green_bgr[:, :, 1] = 255
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "animation.gif"
+            create_video_from_frames(
+                [red_bgr, green_bgr],
+                str(output_path),
+                fps=5,
+                output_format="gif",
+            )
+
+            with Image.open(output_path) as gif:
+                self.assertEqual(gif.format, "GIF")
+                self.assertEqual(gif.n_frames, 2)
+
+    @patch("mover.converter.mover_converter.subprocess.run")
+    def test_mp4_falls_back_when_ffmpeg_encoding_fails(self, mock_run) -> None:
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(["ffmpeg", "-version"], 0),
+            subprocess.CalledProcessError(1, ["ffmpeg"]),
+        ]
+        frame = np.zeros((64, 64, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "animation.mp4"
+            create_video_from_frames(
+                [frame, frame],
+                str(output_path),
+                fps=5,
+                output_format="mp4",
+            )
+
+            self.assertTrue(output_path.exists())
+            self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
 
 
 if __name__ == "__main__":

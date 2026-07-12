@@ -39,42 +39,58 @@ def _get_animation_output_path(
     raise ValueError(f"Unsupported output format: {normalized_format}")
 
 
-def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: int = 30, output_format: str = "mp4") -> None:
+def _save_gif_with_pillow(
+    frames: List[np.ndarray],
+    output_path: str,
+    fps: int,
+) -> None:
+    gif_frames = []
+    for frame in frames:
+        if frame.ndim == 2:
+            gif_frame = Image.fromarray(frame).convert("RGB")
+        elif frame.shape[2] == 4:
+            gif_frame = Image.fromarray(
+                cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
+            )
+        else:
+            gif_frame = Image.fromarray(
+                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            )
+        gif_frames.append(gif_frame)
+
+    gif_frames[0].save(
+        output_path,
+        format="GIF",
+        save_all=True,
+        append_images=gif_frames[1:],
+        duration=max(1, round(1000 / fps)),
+        loop=0,
+    )
+
+
+def create_video_from_frames(
+    frames: List[np.ndarray],
+    output_path: str,
+    fps: int = 30,
+    output_format: str = "mp4",
+    use_ffmpeg: bool = True,
+) -> None:
     """Create a video or GIF from a list of frames using OpenCV and ffmpeg."""
     if not frames:
         raise ValueError("No frames provided")
     if output_format not in VIDEO_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported video output format: {output_format}")
 
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        ffmpeg_available = True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        ffmpeg_available = False
+    ffmpeg_available = False
+    if use_ffmpeg:
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+            ffmpeg_available = True
+        except (subprocess.SubprocessError, FileNotFoundError):
+            pass
 
     if output_format == "gif" and not ffmpeg_available:
-        gif_frames = []
-        for frame in frames:
-            if frame.ndim == 2:
-                gif_frame = Image.fromarray(frame).convert("RGB")
-            elif frame.shape[2] == 4:
-                gif_frame = Image.fromarray(
-                    cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
-                )
-            else:
-                gif_frame = Image.fromarray(
-                    cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                )
-            gif_frames.append(gif_frame)
-
-        gif_frames[0].save(
-            output_path,
-            format="GIF",
-            save_all=True,
-            append_images=gif_frames[1:],
-            duration=max(1, round(1000 / fps)),
-            loop=0,
-        )
+        _save_gif_with_pillow(frames, output_path, fps)
         return
 
     height, width = frames[0].shape[:2]
@@ -91,31 +107,36 @@ def create_video_from_frames(frames: List[np.ndarray], output_path: str, fps: in
         out.release()
 
     if ffmpeg_available:
-        if output_format == "gif":
-            subprocess.run([
-                'ffmpeg', '-y',
-                '-i', str(temp_mp4_path),
-                '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
-                str(output_path)
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        try:
+            if output_format == "gif":
+                subprocess.run([
+                    'ffmpeg', '-y',
+                    '-i', str(temp_mp4_path),
+                    '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
+                    str(output_path)
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            else:
+                ## Convert to web-compatible MP4
+                subprocess.run([
+                    'ffmpeg', '-y',
+                    '-i', str(temp_mp4_path),
+                    '-c:v', 'libx264',
+                    '-preset', 'ultrafast',
+                    '-crf', '23',
+                    '-pix_fmt', 'yuv420p',
+                    '-movflags', '+faststart',
+                    str(output_path)
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             temp_mp4_path.unlink()
-        else:
-            ## Convert to web-compatible MP4
-            subprocess.run([
-                'ffmpeg', '-y',
-                '-i', str(temp_mp4_path),
-                '-c:v', 'libx264',
-                '-preset', 'ultrafast',
-                '-crf', '23',
-                '-pix_fmt', 'yuv420p',
-                '-movflags', '+faststart',
-                str(output_path)
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            temp_mp4_path.unlink()
-    else:
-        print("ffmpeg not found, skipping conversion step")
-        if temp_mp4_path.exists():
-            temp_mp4_path.rename(output_path)
+            return
+        except (subprocess.SubprocessError, FileNotFoundError):
+            print("ffmpeg conversion failed, using fallback encoder")
+
+    if output_format == "gif":
+        temp_mp4_path.unlink(missing_ok=True)
+        _save_gif_with_pillow(frames, output_path, fps)
+    elif temp_mp4_path.exists():
+        temp_mp4_path.replace(output_path)
 
 
 async def capture_frames_server_driven(
@@ -273,7 +294,13 @@ async def capture_frames_server_driven(
                         background.paste(img)
                     img = background
                 video_frames.append(cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
-            create_video_from_frames(video_frames, output_path, fps, output_format)
+            create_video_from_frames(
+                video_frames,
+                output_path,
+                fps,
+                output_format,
+                use_ffmpeg=False,
+            )
             print(f"Video saved to {output_path} (OpenCV fallback)")
 
     finally:

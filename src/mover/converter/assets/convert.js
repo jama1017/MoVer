@@ -127,28 +127,110 @@ function seekToTime(seekTime) {
     return true;
 }
 
-function uniquifySvgIds(svg, prefix) {
+function uniquifySvgIds(svg, prefix, sourceSvg = null) {
   const map = new Map();
-  const idElements = [];
+  const referencedIds = new Set();
+  const allElements = [svg, ...svg.querySelectorAll("*")];
+  const sourceElements = sourceSvg
+    ? [sourceSvg, ...sourceSvg.querySelectorAll("*")]
+    : [];
+  const svgUrlProperties = [
+    "fill",
+    "stroke",
+    "filter",
+    "clip-path",
+    "mask",
+    "marker-start",
+    "marker-mid",
+    "marker-end",
+  ];
 
-  if (svg.id) {
-    idElements.push(svg);
+  const collectReferences = value => {
+    const urlPattern = /url\(\s*(['"]?)[^'")]*#([^'")\s]+)\1\s*\)/g;
+    for (const match of value.matchAll(urlPattern)) {
+      referencedIds.add(match[2]);
+    }
+    const trimmedValue = value.trim();
+    if (/^#[^\s]+$/.test(trimmedValue)) {
+      referencedIds.add(trimmedValue.slice(1));
+    }
+  };
+
+  allElements.forEach(el => {
+    for (const attr of el.getAttributeNames()) {
+      collectReferences(el.getAttribute(attr));
+    }
+  });
+  svg.querySelectorAll("style").forEach(styleElement => {
+    collectReferences(styleElement.textContent);
+  });
+  if (sourceElements.length === allElements.length) {
+    sourceElements.forEach(sourceElement => {
+      const computedStyle = getComputedStyle(sourceElement);
+      svgUrlProperties.forEach(property => {
+        collectReferences(computedStyle.getPropertyValue(property));
+      });
+    });
   }
-  idElements.push(...svg.querySelectorAll("[id]"));
 
-  idElements.forEach(el => {
+  const elementsToRename = allElements
+    .map((element, index) => ({ element, index }))
+    .filter(({ element }) => (
+      element.id && (element.closest("defs") || referencedIds.has(element.id))
+    ));
+
+  elementsToRename.forEach(({ element }) => {
+    const el = element;
     const oldId = el.id;
     const newId = `${prefix}_${oldId}`;
     map.set(oldId, newId);
     el.id = newId;
   });
 
-  [svg, ...svg.querySelectorAll("*")].forEach(el => {
+  if (sourceElements.length === allElements.length) {
+    const styleCopyIndices = new Set();
+    elementsToRename.forEach(({ element }) => {
+      allElements.forEach((candidate, index) => {
+        if (element.contains(candidate)) {
+          styleCopyIndices.add(index);
+        }
+      });
+    });
+
+    styleCopyIndices.forEach(index => {
+      const element = allElements[index];
+      const computedStyle = getComputedStyle(sourceElements[index]);
+      for (let propertyIndex = 0; propertyIndex < computedStyle.length; propertyIndex++) {
+        const property = computedStyle[propertyIndex];
+        element.style.setProperty(
+          property,
+          computedStyle.getPropertyValue(property),
+          computedStyle.getPropertyPriority(property),
+        );
+      }
+    });
+
+    allElements.forEach((element, index) => {
+      const computedStyle = getComputedStyle(sourceElements[index]);
+      svgUrlProperties.forEach(property => {
+        const value = computedStyle.getPropertyValue(property);
+        if ([...map.keys()].some(oldId => value.includes(`#${oldId}`))) {
+          element.style.setProperty(property, value);
+        }
+      });
+    });
+  }
+
+  allElements.forEach(el => {
     for (const attr of el.getAttributeNames()) {
       let value = el.getAttribute(attr);
 
       for (const [oldId, newId] of map) {
-        value = value.replaceAll(`url(#${oldId})`, `url(#${newId})`);
+        const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        value = value.replace(
+          new RegExp(`url\\(\\s*(['"]?)[^'")]*#${escapedId}\\1\\s*\\)`, "g"),
+          (_match, quote) => `url(${quote}#${newId}${quote})`,
+        );
         if (value === `#${oldId}`) {
           value = `#${newId}`;
         }
@@ -198,8 +280,8 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
     if (typeof hideGrid !== "boolean") {
         throw new TypeError("hideGrid must be a boolean");
     }
-    if (!document.body) {
-        throw new Error("Cannot append frames without a document body");
+    if (!document.documentElement || !document.body) {
+        throw new Error("Cannot append frames without a document root and body");
     }
     if (typeof tl_to_use === "undefined" || !tl_to_use
         || typeof tl_to_use.seek !== "function" || typeof tl_to_use.pause !== "function") {
@@ -217,6 +299,7 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
         return 0;
     }
 
+    const root = document.documentElement;
     const body = document.body;
     const hiddenElements = Array.from(body.children)
         .filter(element => element.tagName !== "SCRIPT")
@@ -226,6 +309,8 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
         }));
 
     moverBatchCaptureState = {
+        root,
+        rootStyle: root.getAttribute("style"),
         body,
         bodyStyle: body.getAttribute("style"),
         hiddenElements,
@@ -233,11 +318,11 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
     };
 
     try {
-        hiddenElements.forEach(({ element }) => {
-            element.style.setProperty("display", "none", "important");
-        });
+        root.style.setProperty("margin", "0", "important");
+        root.style.setProperty("padding", "0", "important");
         body.style.setProperty("margin", "0", "important");
         body.style.setProperty("padding", "0", "important");
+        body.style.setProperty("display", "block", "important");
 
         for (let i = 0; i < seekTimes.length; i++) {
             tl_to_use.seek(seekTimes[i], false);
@@ -245,7 +330,7 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
 
             const wrapper = document.createElement("div");
             const svgCopy = srcSvg.cloneNode(true);
-            uniquifySvgIds(svgCopy, `mover_frame_${i}`);
+            uniquifySvgIds(svgCopy, `mover_frame_${i}`, srcSvg);
 
             wrapper.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
             wrapper.setAttribute("data-mover-frame-size", String(frameSize));
@@ -270,6 +355,9 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
             moverBatchCaptureState.wrappers.push(wrapper);
             body.appendChild(wrapper);
         }
+        hiddenElements.forEach(({ element }) => {
+            element.style.setProperty("display", "none", "important");
+        });
     } catch (error) {
         resetSeekAndAppend();
         throw error;
@@ -301,6 +389,12 @@ function resetSeekAndAppend() {
         state.body.removeAttribute("style");
     } else {
         state.body.setAttribute("style", state.bodyStyle);
+    }
+    if (state.rootStyle === null) {
+        state.root.style.cssText = "";
+        state.root.removeAttribute("style");
+    } else {
+        state.root.setAttribute("style", state.rootStyle);
     }
 
     return true;
