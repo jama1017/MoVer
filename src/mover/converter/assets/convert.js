@@ -124,37 +124,8 @@ function seekToTime(seekTime) {
         throw new TypeError("seekTime must be a finite number");
     }
 
-    const globalTimeline = (
-        typeof gsap !== "undefined" && gsap.globalTimeline
-    );
-    const canSeekThroughGlobalTimeline = (
-        globalTimeline
-        && globalTimeline !== tl_to_use
-        && typeof globalTimeline.time === "function"
-        && typeof tl_to_use.globalTime === "function"
-    );
-
-    if (canSeekThroughGlobalTimeline) {
-        globalTimeline.pause();
-        const targetWasPaused = (
-            typeof tl_to_use.paused === "function" && tl_to_use.paused()
-        );
-        if (targetWasPaused) {
-            tl_to_use.paused(false);
-        }
-        const globalSeekTime = tl_to_use.globalTime(seekTime);
-        if (targetWasPaused) {
-            tl_to_use.paused(true);
-        }
-        globalTimeline.time(globalSeekTime, false);
-        globalTimeline.pause();
-        tl_to_use.seek(seekTime, false);
-        tl_to_use.pause();
-    } else {
-        tl_to_use.seek(seekTime, false);
-        tl_to_use.pause();
-    }
-
+    tl_to_use.seek(seekTime, false);
+    tl_to_use.pause();
     return true;
 }
 
@@ -259,7 +230,15 @@ function uniquifySvgResourceIds(svg, prefix) {
         }
     });
     svg.querySelectorAll("style").forEach(styleElement => {
-        styleElement.textContent = rewriteReferences(styleElement.textContent);
+        let css = rewriteReferences(styleElement.textContent);
+        for (const [oldId, newId] of map) {
+            const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            css = css.replace(
+                new RegExp(`#${escapedId}(?![\\w-])`, "g"),
+                `#${newId}`,
+            );
+        }
+        styleElement.textContent = css;
     });
 }
 
@@ -317,21 +296,13 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
             element,
             style: element.getAttribute("style"),
         }));
-    const globalTimeline = (
-        typeof gsap !== "undefined" ? gsap.globalTimeline : null
-    );
-    const gsapStates = [captureGsapAnimationState(globalTimeline)];
-    if (tl_to_use !== globalTimeline) {
-        gsapStates.push(captureGsapAnimationState(tl_to_use));
-    }
-
     moverBatchCaptureState = {
         root,
         rootStyle: root.getAttribute("style"),
         body,
         bodyStyle: body.getAttribute("style"),
         hiddenElements,
-        gsapStates,
+        timelineState: captureGsapAnimationState(tl_to_use),
         frames: [],
     };
 
@@ -417,7 +388,7 @@ function resetSeekAndAppend() {
     } else {
         state.root.setAttribute("style", state.rootStyle);
     }
-    state.gsapStates.forEach(restoreGsapAnimationState);
+    restoreGsapAnimationState(state.timelineState);
 
     return true;
 }
@@ -1024,13 +995,6 @@ function createRenderedData(allElems, registry, propertyConfig = null, fps = 60)
     tl_to_use.seek(0, false).pause();
 
     return res;
-}
-
-function convertAnimatedPropertiesToJson(registry=null, comparisonPropertyConfig = null) {
-    tl_to_use.totalProgress(1);
-    tl_to_use.totalProgress(0);
-    return extractAnimatedProperties(svgRef, registry);
-
 }
 
 async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false, registry=null, comparisonPropertyConfig=null, saveAnimatedProperties=false, fps=60){

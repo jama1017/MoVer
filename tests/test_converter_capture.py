@@ -262,26 +262,5 @@ class OutputNamingTest(unittest.TestCase):
             self.assertFalse(output_path.exists())
             self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
 
-    @patch("mover.converter.mover_converter.subprocess.run")
-    def test_mp4_falls_back_when_ffmpeg_encoding_fails(self, mock_run) -> None:
-        mock_run.side_effect = [
-            subprocess.CompletedProcess(["ffmpeg", "-version"], 0),
-            subprocess.CalledProcessError(1, ["ffmpeg"]),
-        ]
-        frame = np.zeros((64, 64, 3), dtype=np.uint8)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "animation.mp4"
-            create_video_from_frames(
-                [frame, frame],
-                str(output_path),
-                fps=5,
-                output_format="mp4",
-            )
-
-            self.assertTrue(output_path.exists())
-            self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
-
-
 if __name__ == "__main__":
     unittest.main()

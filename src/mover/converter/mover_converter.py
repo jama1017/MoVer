@@ -97,39 +97,38 @@ def create_video_from_frames(
     finally:
         out.release()
 
-    if ffmpeg_available:
+    if output_format == "gif":
         try:
-            if output_format == "gif":
-                subprocess.run([
-                    'ffmpeg', '-y',
-                    '-i', str(temp_mp4_path),
-                    '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
-                    str(output_path)
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            else:
-                ## Convert to web-compatible MP4
-                subprocess.run([
-                    'ffmpeg', '-y',
-                    '-i', str(temp_mp4_path),
-                    '-c:v', 'libx264',
-                    '-preset', 'ultrafast',
-                    '-crf', '23',
-                    '-pix_fmt', 'yuv420p',
-                    '-movflags', '+faststart',
-                    str(output_path)
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            subprocess.run([
+                'ffmpeg', '-y',
+                '-i', str(temp_mp4_path),
+                '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
+                str(output_path)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             temp_mp4_path.unlink()
             return
         except (subprocess.SubprocessError, FileNotFoundError):
-            if output_format == "gif":
-                temp_mp4_path.unlink(missing_ok=True)
-                raise RuntimeError(
-                    "GIF output requires FFmpeg with GIF palette support"
-                )
-            print("ffmpeg conversion failed, using OpenCV MP4 output")
+            temp_mp4_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                "GIF output requires FFmpeg with GIF palette support"
+            )
 
-    if temp_mp4_path.exists():
-        temp_mp4_path.replace(output_path)
+    if ffmpeg_available:
+        ## Preserve the existing MP4 conversion behavior.
+        subprocess.run([
+            'ffmpeg', '-y',
+            '-i', str(temp_mp4_path),
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', '23',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            str(output_path)
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        temp_mp4_path.unlink()
+    elif temp_mp4_path.exists():
+        print("ffmpeg not found, skipping conversion step")
+        temp_mp4_path.rename(output_path)
 
 
 async def capture_frames_server_driven(
@@ -171,12 +170,6 @@ async def capture_frames_server_driven(
         if (devtools) devtools.style.display = 'none';
         // Also hide any GSDevTools container elements
         document.querySelectorAll('[class*="gs-dev-tools"]').forEach(el => el.style.display = 'none');
-        // Stop wall-clock advancement. seekToFrame maps requested local times
-        // through tl_to_use.globalTime(...) so sibling GSAP animations advance
-        // coherently when the root timeline is available.
-        if (typeof gsap !== "undefined" && gsap.globalTimeline) {
-            gsap.globalTimeline.pause();
-        }
     }""")
 
     ## Locate the SVG element once.

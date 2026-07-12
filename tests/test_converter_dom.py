@@ -60,7 +60,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             <body style="padding: 3px 4px !important; background: white">
                 <p id="prompt" style="display: inline-block !important; color: blue">Prompt</p>
                 <svg id="source" width="20" height="20" style="display: inline">
-                    <style>#shape { stroke: black; }</style>
+                    <style>
+                        #shape { stroke: black; }
+                        #paint stop { stop-opacity: 0.5; }
+                    </style>
                     <defs>
                         <linearGradient id="paint">
                             <stop stop-color="green"/>
@@ -71,54 +74,14 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 <br id="break" style="display: block">
                 <div id="existing" style="display: flex !important">Keep me</div>
                 <script>
-                    window.gsap = {
-                        globalTimeline: {
-                            pauseCalls: [],
-                            timeCalls: [],
-                            currentTime: 4,
-                            isPaused: false,
-                            pause() {
-                                this.pauseCalls.push(
-                                    arguments.length ? arguments[0] : null
-                                );
-                                this.isPaused = true;
-                                return this;
-                            },
-                            time(time, suppressEvents) {
-                                if (arguments.length === 0) {
-                                    return this.currentTime;
-                                }
-                                this.timeCalls.push([time, suppressEvents]);
-                                this.currentTime = time;
-                                window.ambientRenderedTime = time - 8;
-                                return this;
-                            },
-                            paused(value) {
-                                if (arguments.length === 0) {
-                                    return this.isPaused;
-                                }
-                                this.isPaused = value;
-                                return this;
-                            },
-                            play() {
-                                this.isPaused = false;
-                                return this;
-                            },
-                        },
-                    };
                     window.tl_to_use = {
                         seekCalls: [],
-                        globalTimeCalls: [],
                         currentTotalTime: 1,
                         isPaused: true,
                         seek(time) {
                             this.seekCalls.push(time);
                             this.renderedTime = time;
                             this.currentTotalTime = time;
-                        },
-                        globalTime(time) {
-                            this.globalTimeCalls.push(time);
-                            return 10 + time;
                         },
                         pause() {
                             this.isPaused = true;
@@ -219,6 +182,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     paintId: svg.querySelector("linearGradient").id,
                     shapeId: svg.querySelector("circle").id,
                     fill: svg.querySelector("circle").getAttribute("fill"),
+                    styleText: svg.querySelector("style").textContent,
                 };
             })"""
         )
@@ -243,6 +207,14 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("#mover_frame_0_paint", default_state[0]["fill"])
         self.assertIn("#mover_frame_1_paint", default_state[1]["fill"])
+        self.assertIn(
+            "#mover_frame_0_paint stop",
+            default_state[0]["styleText"],
+        )
+        self.assertIn(
+            "#mover_frame_1_paint stop",
+            default_state[1]["styleText"],
+        )
 
         screenshot = Image.open(
             io.BytesIO(await self.page.screenshot(type="png", full_page=True))
@@ -254,8 +226,6 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         await self._assert_reset_state(expected_default_state)
         restored_gsap_state = await self.page.evaluate(
             """() => ({
-                rootTime: gsap.globalTimeline.time(),
-                rootPaused: gsap.globalTimeline.paused(),
                 targetTime: tl_to_use.totalTime(),
                 targetPaused: tl_to_use.paused(),
             })"""
@@ -263,8 +233,6 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             restored_gsap_state,
             {
-                "rootTime": 4,
-                "rootPaused": False,
                 "targetTime": 1,
                 "targetPaused": True,
             },
@@ -331,8 +299,8 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
         await self.page.evaluate(
             """() => {
-                window.gsap.globalTimeline.time = time => {
-                    if (time > 10) throw new Error("injected failure");
+                window.tl_to_use.seek = time => {
+                    if (time > 0) throw new Error("injected failure");
                 };
             }"""
         )
@@ -342,42 +310,11 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         await self._assert_reset_state(expected_failure_state)
         self.assertFalse(await self.page.evaluate("resetSeekAndAppend()"))
 
-    async def test_seek_synchronizes_target_and_sibling_global_animations(self) -> None:
-        await self.page.evaluate("seekToTime(2.5)")
-        synchronized_state = await self.page.evaluate(
-            """() => ({
-                globalTimeCalls: tl_to_use.globalTimeCalls,
-                targetRenderedTime: tl_to_use.renderedTime,
-                ambientRenderedTime,
-                rootTimeCalls: gsap.globalTimeline.timeCalls,
-                rootPauseCalls: gsap.globalTimeline.pauseCalls,
-                directSeekCalls: tl_to_use.seekCalls,
-            })"""
-        )
-        self.assertEqual(synchronized_state["globalTimeCalls"], [2.5])
-        self.assertEqual(synchronized_state["targetRenderedTime"], 2.5)
-        self.assertEqual(synchronized_state["ambientRenderedTime"], 4.5)
-        self.assertEqual(synchronized_state["rootTimeCalls"], [[12.5, False]])
-        self.assertEqual(synchronized_state["rootPauseCalls"], [None, None])
-        self.assertEqual(synchronized_state["directSeekCalls"], [2.5])
-
-        await self.page.evaluate(
-            """() => {
-                delete tl_to_use.globalTime;
-                seekToTime(1.25);
-            }"""
-        )
-        self.assertEqual(
-            await self.page.evaluate("tl_to_use.seekCalls"),
-            [2.5, 1.25],
-        )
-
-    async def test_real_gsap_synchronizes_and_restores_timelines(self) -> None:
+    async def test_real_gsap_selected_timeline_renders_and_restores(self) -> None:
         await self.page.add_script_tag(path=str(GSAP_JS))
         initial_state = await self.page.evaluate(
             """() => {
                 window.targetObject = { value: 0 };
-                window.siblingObject = { value: 0 };
                 window.tl_to_use = gsap.timeline({ paused: true });
                 tl_to_use.to(
                     targetObject,
@@ -389,13 +326,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     () => targetUpdateCount++
                 );
                 tl_to_use.timeScale(2);
-                gsap.to(
-                    siblingObject,
-                    { value: 200, duration: 1, ease: "none" }
-                );
                 return {
-                    rootTime: gsap.globalTimeline.totalTime(),
-                    rootPaused: gsap.globalTimeline.paused(),
                     targetTime: tl_to_use.totalTime(),
                     targetPaused: tl_to_use.paused(),
                 };
@@ -406,14 +337,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         synchronized = await self.page.evaluate(
             """() => ({
                 targetValue: targetObject.value,
-                siblingValue: siblingObject.value,
-                rootTime: gsap.globalTimeline.totalTime(),
                 targetTime: tl_to_use.totalTime(),
             })"""
         )
         self.assertAlmostEqual(synchronized["targetValue"], 50, places=4)
-        self.assertGreater(synchronized["siblingValue"], 40)
-        self.assertLess(synchronized["siblingValue"], 60)
         self.assertAlmostEqual(synchronized["targetTime"], 0.5, places=6)
 
         await self.page.evaluate(
@@ -424,8 +351,6 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         before_batch = await self.page.evaluate(
             """() => ({
-                rootTime: gsap.globalTimeline.totalTime(),
-                rootPaused: gsap.globalTimeline.paused(),
                 targetTime: tl_to_use.totalTime(),
                 targetPaused: tl_to_use.paused(),
                 targetReversed: tl_to_use.reversed(),
@@ -444,19 +369,11 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         after_batch = await self.page.evaluate(
             """() => ({
-                rootTime: gsap.globalTimeline.totalTime(),
-                rootPaused: gsap.globalTimeline.paused(),
                 targetTime: tl_to_use.totalTime(),
                 targetPaused: tl_to_use.paused(),
                 targetReversed: tl_to_use.reversed(),
             })"""
         )
-        self.assertAlmostEqual(
-            after_batch["rootTime"],
-            before_batch["rootTime"],
-            places=6,
-        )
-        self.assertEqual(after_batch["rootPaused"], before_batch["rootPaused"])
         self.assertAlmostEqual(
             after_batch["targetTime"],
             before_batch["targetTime"],
@@ -471,22 +388,6 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             before_batch["targetReversed"],
         )
         self.assertTrue(initial_state["targetPaused"])
-
-    async def test_animated_property_conversion_does_not_leak_global(self) -> None:
-        result = await self.page.evaluate(
-            """registry => convertAnimatedPropertiesToJson(registry)""",
-            {
-                "gsapAliases": {},
-                "spatial": {},
-                "visual": {},
-                "svgAttributes": {},
-            },
-        )
-        self.assertEqual(result, {})
-        self.assertEqual(
-            await self.page.evaluate("typeof window.animatedProps"),
-            "undefined",
-        )
 
     async def test_real_browser_server_capture_and_grid_suppression(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -570,12 +471,5 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 [frame.getvalue() for frame in memory_svg_frames],
                 [path.read_text() for path in disk_svg_paths],
             )
-            pause_calls = await self.page.evaluate(
-                "gsap.globalTimeline.pauseCalls"
-            )
-            self.assertGreaterEqual(len(pause_calls), 5)
-            self.assertTrue(all(call is None for call in pause_calls))
-
-
 if __name__ == "__main__":
     unittest.main()
