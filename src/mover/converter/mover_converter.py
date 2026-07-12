@@ -21,7 +21,6 @@ import uvicorn
 VIDEO_OUTPUT_FORMATS = {"mp4", "gif"}
 FRAME_OUTPUT_FORMATS = {"png", "svg"}
 SUPPORTED_OUTPUT_FORMATS = VIDEO_OUTPUT_FORMATS | FRAME_OUTPUT_FORMATS
-HIDE_GRID_SCREENSHOT_STYLE = "svg { background-image: none !important; }"
 
 
 def _get_animation_output_path(
@@ -37,6 +36,31 @@ def _get_animation_output_path(
     if normalized_format in VIDEO_OUTPUT_FORMATS:
         return Path(output_dir) / f"{base_name}_animation.{normalized_format}"
     raise ValueError(f"Unsupported output format: {normalized_format}")
+
+
+async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
+    if not hide_grid:
+        return await svg_element.screenshot(type="png")
+
+    original_style = await svg_element.get_attribute("style")
+    await svg_element.evaluate(
+        """element =>
+            element.style.setProperty("background-image", "none", "important")
+        """
+    )
+    try:
+        return await svg_element.screenshot(type="png")
+    finally:
+        await svg_element.evaluate(
+            """(element, originalStyle) => {
+                if (originalStyle === null) {
+                    element.removeAttribute("style");
+                } else {
+                    element.setAttribute("style", originalStyle);
+                }
+            }""",
+            original_style,
+        )
 
 
 def create_video_from_frames(
@@ -199,13 +223,7 @@ async def capture_frames_server_driven(
                     frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
                     frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
             else:
-                if hide_grid:
-                    png_bytes = await svg_element.screenshot(
-                        type="png",
-                        style=HIDE_GRID_SCREENSHOT_STYLE,
-                    )
-                else:
-                    png_bytes = await svg_element.screenshot(type="png")
+                png_bytes = await _capture_svg_png(svg_element, hide_grid)
 
                 if in_memory:
                     img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")

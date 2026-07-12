@@ -204,128 +204,63 @@ function restoreGsapAnimationState(state) {
     }
 }
 
-function createFrameSnapshotHtml(srcSvg, frameSize, hideGrid) {
-    const sourceSvgIndex = Array.from(
-        document.querySelectorAll("body > svg")
-    ).indexOf(srcSvg);
-    const documentCopy = document.documentElement.cloneNode(true);
-    documentCopy.querySelectorAll("script").forEach(element => {
-        element.type = "application/x-mover-snapshot";
-        element.removeAttribute("src");
-        element.textContent = "";
-    });
-    documentCopy.querySelectorAll("meta[http-equiv='refresh' i]")
+function uniquifySvgResourceIds(svg, prefix) {
+    const map = new Map();
+    const resourceTags = new Set([
+        "lineargradient",
+        "radialgradient",
+        "filter",
+        "clippath",
+        "mask",
+        "pattern",
+        "marker",
+        "symbol",
+    ]);
+    const elements = [svg, ...svg.querySelectorAll("*")];
+
+    elements
+        .filter(element => (
+            element.id && (
+                element.closest("defs")
+                || resourceTags.has(element.tagName.toLowerCase())
+            )
+        ))
         .forEach(element => {
-            element.removeAttribute("http-equiv");
-            element.removeAttribute("content");
+            const oldId = element.id;
+            const newId = `${prefix}_${oldId}`;
+            map.set(oldId, newId);
+            element.id = newId;
         });
-    documentCopy.querySelectorAll("iframe").forEach(element => {
-        element.removeAttribute("src");
-        element.removeAttribute("srcdoc");
-    });
-    documentCopy.querySelectorAll("object").forEach(element => {
-        element.removeAttribute("data");
-    });
-    documentCopy.querySelectorAll("embed").forEach(element => {
-        element.removeAttribute("src");
-    });
-    documentCopy.querySelectorAll(`[${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
-        .forEach(frame => frame.remove());
 
-    const headCopy = documentCopy.querySelector("head");
-    const bodyCopy = documentCopy.querySelector("body");
-    const sourceSvgCopy = bodyCopy.querySelectorAll(":scope > svg")[sourceSvgIndex];
-    if (!sourceSvgCopy) {
-        throw new Error("Unable to locate the source SVG in frame snapshot");
-    }
+    const rewriteReferences = value => {
+        let rewritten = value;
+        for (const [oldId, newId] of map) {
+            const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            rewritten = rewritten.replace(
+                new RegExp(
+                    `url\\(\\s*(['"]?)[^'")]*#${escapedId}\\1\\s*\\)`,
+                    "g",
+                ),
+                (_match, quote) => `url(${quote}#${newId}${quote})`,
+            );
+            if (rewritten === `#${oldId}`) {
+                rewritten = `#${newId}`;
+            }
+        }
+        return rewritten;
+    };
 
-    const base = document.createElement("base");
-    base.href = document.baseURI;
-    headCopy.insertBefore(base, headCopy.firstChild);
-
-    documentCopy.style.setProperty("margin", "0", "important");
-    documentCopy.style.setProperty("padding", "0", "important");
-    bodyCopy.style.setProperty("margin", "0", "important");
-    bodyCopy.style.setProperty("padding", "0", "important");
-    bodyCopy.style.setProperty("display", "block", "important");
-    Array.from(bodyCopy.children).forEach(element => {
-        if (element !== sourceSvgCopy) {
-            element.style.setProperty("display", "none", "important");
+    elements.forEach(element => {
+        for (const attr of element.getAttributeNames()) {
+            element.setAttribute(
+                attr,
+                rewriteReferences(element.getAttribute(attr)),
+            );
         }
     });
-
-    sourceSvgCopy.classList.remove("svg-width-fit-preview-target");
-    sourceSvgCopy.style.setProperty("width", `${frameSize}px`, "important");
-    sourceSvgCopy.style.setProperty("height", `${frameSize}px`, "important");
-    sourceSvgCopy.style.setProperty("overflow", "hidden", "important");
-    sourceSvgCopy.style.setProperty("display", "block", "important");
-    sourceSvgCopy.style.setProperty("margin", "0", "important");
-    sourceSvgCopy.style.setProperty("padding", "0", "important");
-    sourceSvgCopy.style.setProperty("border", "0", "important");
-    sourceSvgCopy.style.setProperty("box-sizing", "border-box", "important");
-    if (hideGrid) {
-        sourceSvgCopy.style.setProperty("background-image", "none", "important");
-    }
-
-    return `<!DOCTYPE html>${documentCopy.outerHTML}`;
-}
-
-function loadFrameSnapshot(
-    frame,
-    html,
-    timeoutMs = 10000,
-) {
-    let timeoutId;
-    const loadPromise = new Promise((resolve, reject) => {
-        frame.addEventListener("load", async () => {
-            try {
-                const frameDocument = frame.contentDocument;
-                await frameDocument.fonts.ready;
-                for (const stylesheet of frameDocument.querySelectorAll(
-                    'link[rel="stylesheet"]'
-                )) {
-                    if (!stylesheet.sheet) {
-                        throw new Error(
-                            `Frame stylesheet failed to load: ${stylesheet.href}`
-                        );
-                    }
-                }
-                const failedResources = frame.contentWindow.performance
-                    .getEntriesByType("resource")
-                    .filter(entry => (
-                        typeof entry.responseStatus === "number"
-                        && entry.responseStatus >= 400
-                    ));
-                if (failedResources.length > 0) {
-                    throw new Error(
-                        `Frame resources failed to load: ${
-                            failedResources.map(entry => entry.name).join(", ")
-                        }`
-                    );
-                }
-                await new Promise(resolve => {
-                    frame.contentWindow.requestAnimationFrame(resolve);
-                });
-                resolve();
-            } catch (error) {
-                reject(error);
-            }
-        }, { once: true });
-        frame.addEventListener(
-            "error",
-            () => reject(new Error("Frame snapshot failed to load")),
-            { once: true },
-        );
-        frame.srcdoc = html;
+    svg.querySelectorAll("style").forEach(styleElement => {
+        styleElement.textContent = rewriteReferences(styleElement.textContent);
     });
-    const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(
-            () => reject(new Error("Frame snapshot timed out while loading")),
-            timeoutMs,
-        );
-    });
-    return Promise.race([loadPromise, timeoutPromise])
-        .finally(() => clearTimeout(timeoutId));
 }
 
 function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
@@ -342,7 +277,7 @@ function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
 const MOVER_BATCH_FRAME_ATTRIBUTE = "data-mover-batch-frame";
 let moverBatchCaptureState = null;
 
-async function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
+function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
     if (!Array.isArray(seekTimes)) {
         throw new TypeError("seekTimes must be an array");
     }
@@ -410,30 +345,39 @@ async function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid
         for (let i = 0; i < seekTimes.length; i++) {
             seekToTime(seekTimes[i]);
 
-            const frame = document.createElement("iframe");
-            frame.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
-            frame.setAttribute("data-mover-frame-size", String(frameSize));
-            frame.setAttribute("sandbox", "allow-same-origin");
-            frame.style.setProperty("width", `${frameSize}px`, "important");
-            frame.style.setProperty("height", `${frameSize}px`, "important");
-            frame.style.setProperty("display", "block", "important");
-            frame.style.setProperty("margin", "0", "important");
-            frame.style.setProperty("padding", "0", "important");
-            frame.style.setProperty("border", "0", "important");
-            frame.style.setProperty("box-sizing", "border-box", "important");
+            const wrapper = document.createElement("div");
+            const svgCopy = srcSvg.cloneNode(true);
+            uniquifySvgResourceIds(svgCopy, `mover_frame_${i}`);
 
-            moverBatchCaptureState.frames.push(frame);
-            body.appendChild(frame);
-            await loadFrameSnapshot(
-                frame,
-                createFrameSnapshotHtml(srcSvg, frameSize, hideGrid),
-            );
+            wrapper.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
+            wrapper.setAttribute("data-mover-frame-size", String(frameSize));
+            wrapper.style.setProperty("width", `${frameSize}px`, "important");
+            wrapper.style.setProperty("height", `${frameSize}px`, "important");
+            wrapper.style.setProperty("overflow", "hidden", "important");
+            wrapper.style.setProperty("display", "block", "important");
+            wrapper.style.setProperty("margin", "0", "important");
+            wrapper.style.setProperty("padding", "0", "important");
+            wrapper.style.setProperty("border", "0", "important");
+            wrapper.style.setProperty("box-sizing", "border-box", "important");
+
+            svgCopy.classList.remove("svg-width-fit-preview-target");
+            svgCopy.style.setProperty("width", `${frameSize}px`, "important");
+            svgCopy.style.setProperty("height", `${frameSize}px`, "important");
+            svgCopy.style.setProperty("display", "block", "important");
+            if (hideGrid) {
+                svgCopy.style.setProperty(
+                    "background-image",
+                    "none",
+                    "important",
+                );
+            }
+
+            wrapper.appendChild(svgCopy);
+            moverBatchCaptureState.frames.push(wrapper);
+            body.appendChild(wrapper);
         }
         hiddenElements.forEach(({ element }) => {
             element.style.setProperty("display", "none", "important");
-        });
-        await new Promise(resolve => {
-            requestAnimationFrame(() => requestAnimationFrame(resolve));
         });
     } catch (error) {
         resetSeekAndAppend();
@@ -449,23 +393,11 @@ function resetSeekAndAppend() {
 
     if (!state) {
         document.querySelectorAll(`body > [${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
-            .forEach(frame => {
-                if (frame.contentDocument) {
-                    frame.contentDocument.getAnimations()
-                        .forEach(animation => animation.cancel());
-                }
-                frame.remove();
-            });
+            .forEach(frame => frame.remove());
         return false;
     }
 
-    state.frames.forEach(frame => {
-        if (frame.contentDocument) {
-            frame.contentDocument.getAnimations()
-                .forEach(animation => animation.cancel());
-        }
-        frame.remove();
-    });
+    state.frames.forEach(frame => frame.remove());
     state.hiddenElements.forEach(({ element, style }) => {
         if (style === null) {
             element.removeAttribute("style");

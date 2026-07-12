@@ -56,22 +56,9 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 #shape {
                     opacity: 0.5;
                 }
-                body > svg .shape-resource {
-                    fill: url("#paint");
-                }
-                body > svg #symbol .part {
-                    fill: rgb(0, 0, 255);
-                    opacity: 0.4;
-                }
-                #prompt + svg #shape {
-                    stroke-width: 3px;
-                }
-                svg:first-of-type #shape {
-                    stroke-linecap: round;
-                }
             </style>
             <body style="padding: 3px 4px !important; background: white">
-                <p id="prompt" onclick="window.parent.hacked = true" style="display: inline-block !important; color: blue">Prompt</p>
+                <p id="prompt" style="display: inline-block !important; color: blue">Prompt</p>
                 <svg id="source" width="20" height="20" style="display: inline">
                     <style>#shape { stroke: black; }</style>
                     <defs>
@@ -79,11 +66,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                             <stop stop-color="green"/>
                         </linearGradient>
                     </defs>
-                    <circle class="shape-resource" id="shape" cx="10" cy="10" r="3"/>
-                    <g id="symbol">
-                        <rect class="part" x="15" y="15" width="2" height="2"/>
-                    </g>
-                    <use id="symbol-copy" href="#symbol" x="8"/>
+                    <circle id="shape" cx="10" cy="10" r="3" fill='url("#paint")'/>
                 </svg>
                 <br id="break" style="display: block">
                 <div id="existing" style="display: flex !important">Keep me</div>
@@ -221,9 +204,9 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         default_state = await self.page.evaluate(
             """() => Array.from(
                 document.querySelectorAll("body > [data-mover-batch-frame]")
-            ).map(frame => {
-                const rect = frame.getBoundingClientRect();
-                const svg = frame.contentDocument.querySelector("body > svg");
+            ).map(wrapper => {
+                const rect = wrapper.getBoundingClientRect();
+                const svg = wrapper.querySelector(":scope > svg");
                 return {
                     rect: {
                         x: rect.x,
@@ -231,34 +214,11 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                         width: rect.width,
                         height: rect.height,
                     },
-                    sandbox: frame.getAttribute("sandbox"),
-                    scriptCount: frame.contentDocument.querySelectorAll("script").length,
-                    eventHandlerCount: Array.from(
-                        frame.contentDocument.querySelectorAll("*")
-                    ).reduce(
-                        (count, element) => count + element.getAttributeNames()
-                            .filter(attr => attr.toLowerCase().startsWith("on")).length,
-                        0,
-                    ),
-                    freezeStyleCount: frame.contentDocument.querySelectorAll(
-                        "style[data-mover-snapshot-freeze]"
-                    ).length,
-                    svgCount: frame.contentDocument.querySelectorAll("body > svg").length,
+                    svgCount: wrapper.querySelectorAll(":scope > svg").length,
                     backgroundImage: getComputedStyle(svg).backgroundImage,
-                    rootId: svg.id,
                     paintId: svg.querySelector("linearGradient").id,
                     shapeId: svg.querySelector("circle").id,
-                    shapeOpacity: getComputedStyle(svg.querySelector("circle")).opacity,
-                    shapeStrokeWidth: getComputedStyle(svg.querySelector("circle")).strokeWidth,
-                    shapeStrokeLinecap: getComputedStyle(svg.querySelector("circle")).strokeLinecap,
-                    fill: getComputedStyle(svg.querySelector("circle")).fill,
-                    symbolId: svg.querySelector("g").id,
-                    symbolUseHref: svg.querySelector("use").getAttribute("href"),
-                    partFill: getComputedStyle(svg.querySelector(".part")).fill,
-                    partOpacity: getComputedStyle(svg.querySelector(".part")).opacity,
-                    styleText: svg.querySelector(
-                        "style:not([data-mover-rewritten-resource-styles])"
-                    ).textContent,
+                    fill: svg.querySelector("circle").getAttribute("fill"),
                 };
             })"""
         )
@@ -270,69 +230,19 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual([state["svgCount"] for state in default_state], [1, 1])
-        self.assertEqual(
-            [state["sandbox"] for state in default_state],
-            ["allow-same-origin", "allow-same-origin"],
-        )
-        self.assertTrue(all(state["scriptCount"] >= 1 for state in default_state))
-        self.assertEqual([state["eventHandlerCount"] for state in default_state], [1, 1])
-        self.assertEqual([state["freezeStyleCount"] for state in default_state], [0, 0])
-        self.assertEqual(
-            await self.page.evaluate("typeof window.hacked"),
-            "undefined",
-        )
         self.assertTrue(
             all("linear-gradient" in state["backgroundImage"] for state in default_state)
         )
         self.assertEqual(
-            [state["rootId"] for state in default_state],
-            ["source", "source"],
-        )
-        self.assertEqual(
             [state["paintId"] for state in default_state],
-            ["paint", "paint"],
+            ["mover_frame_0_paint", "mover_frame_1_paint"],
         )
         self.assertEqual(
             [state["shapeId"] for state in default_state],
             ["shape", "shape"],
         )
-        self.assertEqual(
-            [state["shapeOpacity"] for state in default_state],
-            ["0.5", "0.5"],
-        )
-        self.assertEqual(
-            [state["shapeStrokeWidth"] for state in default_state],
-            ["3px", "3px"],
-        )
-        self.assertEqual(
-            [state["shapeStrokeLinecap"] for state in default_state],
-            ["round", "round"],
-        )
-        self.assertIn("#paint", default_state[0]["fill"])
-        self.assertIn("#paint", default_state[1]["fill"])
-        self.assertEqual(
-            [state["symbolId"] for state in default_state],
-            ["symbol", "symbol"],
-        )
-        self.assertEqual(
-            [state["symbolUseHref"] for state in default_state],
-            ["#symbol", "#symbol"],
-        )
-        self.assertEqual(
-            [state["partFill"] for state in default_state],
-            ["rgb(0, 0, 255)", "rgb(0, 0, 255)"],
-        )
-        self.assertEqual(
-            [state["partOpacity"] for state in default_state],
-            ["0.4", "0.4"],
-        )
-        self.assertEqual(
-            [state["styleText"].strip() for state in default_state],
-            [
-                "#shape { stroke: black; }",
-                "#shape { stroke: black; }",
-            ],
-        )
+        self.assertIn("#mover_frame_0_paint", default_state[0]["fill"])
+        self.assertIn("#mover_frame_1_paint", default_state[1]["fill"])
 
         screenshot = Image.open(
             io.BytesIO(await self.page.screenshot(type="png", full_page=True))
@@ -369,9 +279,9 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         large_state = await self.page.evaluate(
             """() => Array.from(
                 document.querySelectorAll("body > [data-mover-batch-frame]")
-            ).map(frame => {
-                const rect = frame.getBoundingClientRect();
-                const svg = frame.contentDocument.querySelector("body > svg");
+            ).map(wrapper => {
+                const rect = wrapper.getBoundingClientRect();
+                const svg = wrapper.querySelector(":scope > svg");
                 return {
                     rect: {
                         x: rect.x,

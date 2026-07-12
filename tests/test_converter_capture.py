@@ -9,7 +9,6 @@ import numpy as np
 from PIL import Image
 
 from mover.converter.mover_converter import (
-    HIDE_GRID_SCREENSHOT_STYLE,
     _get_animation_output_path,
     capture_frames_server_driven,
     create_video_from_frames,
@@ -28,6 +27,8 @@ class FakeSvgLocator:
         self.first = self
         self.png_bytes = png_bytes
         self.screenshot_calls: list[dict] = []
+        self.evaluate_calls: list[tuple[str, object | None]] = []
+        self.style = "display: block"
 
     async def wait_for(self, **kwargs) -> None:
         return None
@@ -35,6 +36,18 @@ class FakeSvgLocator:
     async def screenshot(self, **kwargs) -> bytes:
         self.screenshot_calls.append(kwargs)
         return self.png_bytes
+
+    async def get_attribute(self, name: str):
+        if name != "style":
+            raise AssertionError(f"Unexpected attribute: {name}")
+        return self.style
+
+    async def evaluate(self, expression: str, argument=None):
+        self.evaluate_calls.append((expression, argument))
+        if "background-image" in expression:
+            self.style = f"{self.style}; background-image: none !important"
+        elif "originalStyle" in expression:
+            self.style = argument
 
 
 class FakePage:
@@ -156,8 +169,9 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertFalse(output_path.exists())
 
-    async def test_hide_grid_uses_temporary_screenshot_style(self) -> None:
+    async def test_hide_grid_restores_inline_style_after_screenshot(self) -> None:
         page = FakePage()
+        original_style = page.svg_locator.style
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "missing" / "frames"
@@ -174,11 +188,10 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(output_path.parent.exists())
             self.assertEqual(
                 page.svg_locator.screenshot_calls,
-                [
-                    {"type": "png", "style": HIDE_GRID_SCREENSHOT_STYLE},
-                    {"type": "png", "style": HIDE_GRID_SCREENSHOT_STYLE},
-                ],
+                [{"type": "png"}] * 2,
             )
+            self.assertEqual(page.svg_locator.style, original_style)
+            self.assertEqual(len(page.svg_locator.evaluate_calls), 4)
 
 
 class OutputNamingTest(unittest.TestCase):
