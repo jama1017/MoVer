@@ -119,10 +119,20 @@ function getSvgSceneSize(svgElement = svgRef) {
         if (value === null || value.trim() === "") {
             return null;
         }
-        const parsed = Number(value);
+        const normalized = value.trim();
+        if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:px)?$/.test(
+            normalized
+        )) {
+            return null;
+        }
+        const parsed = parseFloat(normalized);
         return Number.isFinite(parsed) ? parsed : null;
     };
-    const viewBox = svgElement.viewBox && svgElement.viewBox.baseVal;
+    const viewBox = (
+        svgElement.hasAttribute("viewBox")
+        && svgElement.viewBox
+        && svgElement.viewBox.baseVal
+    );
     const width = getExplicitDimension("width");
     const height = getExplicitDimension("height");
     return {
@@ -455,7 +465,9 @@ function resetSeekAndAppend() {
     } else {
         state.root.setAttribute("style", state.rootStyle);
     }
-    restoreGsapAnimationState(state.timelineState);
+    // Re-run deterministic callbacks so callback-derived SVG state matches
+    // the restored selected-timeline time.
+    restoreGsapAnimationState(state.timelineState, false);
 
     return true;
 }

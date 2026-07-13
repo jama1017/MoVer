@@ -339,6 +339,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 source.removeAttribute("height");
                 source.setAttribute("viewBox", "0 0 320 180");
                 shape.setAttribute("fill", "url(#paint)");
+                const viewBoxSceneSize = getSvgSceneSize(source);
 
                 const objectWithPaintServer = createObjectList([shape], [])[0];
                 const keyframes = convertToKeyframes([shape]);
@@ -352,14 +353,23 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
                 shape.setAttribute("fill", "#ffffff");
                 const objectWithHexFill = createObjectList([shape], [])[0];
+                source.setAttribute("width", "640px");
+                source.setAttribute("height", "480px");
+                const unitSceneSize = getSvgSceneSize(source);
+                source.removeAttribute("width");
+                source.removeAttribute("height");
+                source.removeAttribute("viewBox");
+                const missingSceneSize = getSvgSceneSize(source);
                 return {
-                    directSceneSize: getSvgSceneSize(source),
+                    directSceneSize: viewBoxSceneSize,
                     keyframeSceneSize: keyframes.info["scene-size"],
                     transformationSceneSize:
                         transformations.info["scene-size"],
                     renderedSceneSize: rendered.info["scene-size"],
                     paintServerFill: objectWithPaintServer.fill,
                     hexFill: objectWithHexFill.fill,
+                    unitSceneSize,
+                    missingSceneSize,
                 };
             }"""
         )
@@ -370,6 +380,14 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["renderedSceneSize"], expected_size)
         self.assertEqual(result["paintServerFill"], "url(#paint)")
         self.assertEqual(result["hexFill"], "white")
+        self.assertEqual(
+            result["unitSceneSize"],
+            {"width": 640, "height": 480},
+        )
+        self.assertEqual(
+            result["missingSceneSize"],
+            {"width": None, "height": None},
+        )
 
     async def test_invalid_options_and_seek_failure_do_not_mutate_page(self) -> None:
         for expression in (
@@ -398,6 +416,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         await self.page.add_script_tag(path=str(GSAP_JS))
         initial_state = await self.page.evaluate(
             """() => {
+                const shape = document.querySelector("#shape");
                 window.targetObject = { value: 0 };
                 window.tl_to_use = gsap.timeline({ paused: true });
                 tl_to_use.to(
@@ -407,7 +426,13 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 window.targetUpdateCount = 0;
                 tl_to_use.eventCallback(
                     "onUpdate",
-                    () => targetUpdateCount++
+                    () => {
+                        targetUpdateCount++;
+                        shape.setAttribute(
+                            "data-progress",
+                            String(Math.round(targetObject.value))
+                        );
+                    }
                 );
                 tl_to_use.timeScale(2);
                 return {
@@ -422,10 +447,13 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             """() => ({
                 targetValue: targetObject.value,
                 targetTime: tl_to_use.totalTime(),
+                progress: document.querySelector("#shape")
+                    .getAttribute("data-progress"),
             })"""
         )
         self.assertAlmostEqual(synchronized["targetValue"], 50, places=4)
         self.assertAlmostEqual(synchronized["targetTime"], 0.5, places=6)
+        self.assertEqual(synchronized["progress"], "50")
 
         before_batch = await self.page.evaluate(
             """() => {
@@ -443,8 +471,14 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         update_count_before_reset = await self.page.evaluate(
             "targetUpdateCount"
         )
-        self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
         self.assertEqual(
+            await self.page.locator("body > svg #shape").get_attribute(
+                "data-progress"
+            ),
+            "75",
+        )
+        self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
+        self.assertGreater(
             await self.page.evaluate("targetUpdateCount"),
             update_count_before_reset,
         )
@@ -453,6 +487,8 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 targetTime: tl_to_use.totalTime(),
                 targetPaused: tl_to_use.paused(),
                 targetReversed: tl_to_use.reversed(),
+                progress: document.querySelector("#shape")
+                    .getAttribute("data-progress"),
             })"""
         )
         self.assertAlmostEqual(
@@ -468,6 +504,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             after_batch["targetReversed"],
             before_batch["targetReversed"],
         )
+        self.assertEqual(after_batch["progress"], "50")
         self.assertTrue(initial_state["targetPaused"])
 
     async def test_rendered_data_runs_callback_derived_svg_updates(self) -> None:
