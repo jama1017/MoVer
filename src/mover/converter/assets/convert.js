@@ -113,6 +113,29 @@ function getSvgDimensions() {
 }
 
 
+function getSvgSceneSize(svgElement = svgRef) {
+    const getExplicitDimension = name => {
+        const value = svgElement.getAttribute(name);
+        if (value === null || value.trim() === "") {
+            return null;
+        }
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    };
+    const viewBox = svgElement.viewBox && svgElement.viewBox.baseVal;
+    const width = getExplicitDimension("width");
+    const height = getExplicitDimension("height");
+    return {
+        width: width !== null
+            ? width
+            : (viewBox && Number.isFinite(viewBox.width) ? viewBox.width : null),
+        height: height !== null
+            ? height
+            : (viewBox && Number.isFinite(viewBox.height) ? viewBox.height : null),
+    };
+}
+
+
 // Seek timeline to a specific frame index. Returns true if successful.
 function seekToFrame(frameIndex, fps, animDuration) {
     const seekTime = getSeekTime(frameIndex, fps, animDuration);
@@ -440,7 +463,7 @@ function resetSeekAndAppend() {
 
 function convertToKeyframes(allElems) {
     let res = { "info": {} }
-    res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
+    res["info"]["scene-size"] = getSvgSceneSize()
 
     for (let j = 0; j < allElems.length; j++) {
         let elem = allElems[j]
@@ -531,7 +554,7 @@ function getAllTransformationValues(animatedElems, fps = 60) {
 
     let res = {}
     res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
-    res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
+    res["info"]["scene-size"] = getSvgSceneSize()
 
     for (let j = 0; j < animatedElems.length; j++) {
         let elem = animatedElems[j]
@@ -768,7 +791,7 @@ function createObjectList(animatedElems, non_animatedElems) {
         // fill
         if (elem.hasAttribute("fill")) {
             let fillStr = elem.getAttribute("fill")
-            if (fillStr.includes("#")) {
+            if (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(fillStr.trim())) {
                 elem_data["fill"] = ntc.name(fillStr)[1].toLowerCase()
             } else {
                 elem_data["fill"] = fillStr
@@ -987,7 +1010,7 @@ function createRenderedData(allElems, registry, propertyConfig = null, fps = 60)
 
     let res = {}
     res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
-    res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
+    res["info"]["scene-size"] = getSvgSceneSize()
 
     for (let j = 0; j < allElems.length; j++) {
         let elem = allElems[j]

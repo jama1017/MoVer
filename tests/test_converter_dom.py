@@ -82,6 +82,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                             this.seekCalls.push(time);
                             this.renderedTime = time;
                             this.currentTotalTime = time;
+                            return this;
                         },
                         pause() {
                             this.isPaused = true;
@@ -325,6 +326,50 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
         await self._assert_reset_state()
+
+    async def test_scene_size_falls_back_to_viewbox_and_preserves_paint_fill(
+        self,
+    ) -> None:
+        await self.page.add_script_tag(path=str(GSAP_JS))
+        result = await self.page.evaluate(
+            """() => {
+                const source = document.querySelector("#source");
+                const shape = document.querySelector("#shape");
+                source.removeAttribute("width");
+                source.removeAttribute("height");
+                source.setAttribute("viewBox", "0 0 320 180");
+                shape.setAttribute("fill", "url(#paint)");
+
+                const objectWithPaintServer = createObjectList([shape], [])[0];
+                const keyframes = convertToKeyframes([shape]);
+                const transformations = getAllTransformationValues([shape], 1);
+                const rendered = createRenderedData(
+                    [shape],
+                    { spatial: {} },
+                    { spatial: [], visual: [], svgAttributes: [] },
+                    1
+                );
+
+                shape.setAttribute("fill", "#ffffff");
+                const objectWithHexFill = createObjectList([shape], [])[0];
+                return {
+                    directSceneSize: getSvgSceneSize(source),
+                    keyframeSceneSize: keyframes.info["scene-size"],
+                    transformationSceneSize:
+                        transformations.info["scene-size"],
+                    renderedSceneSize: rendered.info["scene-size"],
+                    paintServerFill: objectWithPaintServer.fill,
+                    hexFill: objectWithHexFill.fill,
+                };
+            }"""
+        )
+        expected_size = {"width": 320, "height": 180}
+        self.assertEqual(result["directSceneSize"], expected_size)
+        self.assertEqual(result["keyframeSceneSize"], expected_size)
+        self.assertEqual(result["transformationSceneSize"], expected_size)
+        self.assertEqual(result["renderedSceneSize"], expected_size)
+        self.assertEqual(result["paintServerFill"], "url(#paint)")
+        self.assertEqual(result["hexFill"], "white")
 
     async def test_invalid_options_and_seek_failure_do_not_mutate_page(self) -> None:
         for expression in (
