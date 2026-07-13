@@ -4,6 +4,15 @@ import itertools
 import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
 from itertools import product
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="MoVer natural-language generation",
+    modules={"pyrealb": "pyrealb"},
+)
+
 from pyrealb import S, VP, V, NP, SP, PhraseEn, AdvP, loadEn
 from mover.nlg.utils import divide_list_into_three
 from mover.nlg.sentence_generation.vocab import Vocab, LazyPyRealB

@@ -16,6 +16,8 @@ mover_dataset/*
 !mover_dataset/create_dataset.py
 !mover_dataset/dataset_scene_graphs.py
 src/mover.egg-info/
+build/
+dist/
 src/mover/converter/assets/library*.js
 debug.ipynb
 tests/*
@@ -27,6 +29,8 @@ tests/*
 !tests/test_animation_prompt_assets.py
 !tests/test_mover_querier.py
 !tests/test_transform_types.py
+!tests/check_release_artifacts.py
+!tests/release_profile_smoke.py
 
 ## Outputs
 example_output/
@@ -52,5 +56,4 @@ examples/svg/eye.svg
 !examples/teaser_hi*
 .cursor/*
 .vscode/*
-.github/*
 plans/*

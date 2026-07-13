@@ -1,9 +1,18 @@
 import json
 import heapq
 import argparse
-import yaml
 from pathlib import Path
 from typing import Tuple, List
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="MoVer statistics utilities",
+    modules={"yaml": "PyYAML"},
+)
+
+import yaml
 
 parser = argparse.ArgumentParser()
 parser.add_argument("configs", type=str, nargs='+', help="List of YAML config files to process.")

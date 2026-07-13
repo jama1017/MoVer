@@ -1,7 +1,7 @@
 from pathlib import Path
-import jinja2
 from typing import List, Dict, Any, Optional, Tuple
 from mover.synthesizers.base_synthesizer import BaseSynthesizer
+import jinja2
 from mover.synthesizers.utils import extract_code_block, get_svg_code
 from mover.config import LIBRARY_CONFIG
 

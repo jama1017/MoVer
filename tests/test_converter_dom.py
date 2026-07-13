@@ -35,6 +35,8 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             self.browser = await self.playwright.chromium.launch(**launch_options)
         except PlaywrightError as error:
             await self.playwright.stop()
+            if os.environ.get("MOVER_REQUIRE_BROWSER") == "1":
+                raise
             self.skipTest(f"Chromium is unavailable: {error}")
 
         self.page = await self.browser.new_page()

@@ -3,7 +3,7 @@
 [Jiaju Ma](https://majiaju.io) and
 [Maneesh Agrawala](https://graphics.stanford.edu/~maneesh/)
 <br />
-In ACM Transactions on Graphics (SIGGRAPH), 44(4), August 2025. To Appear.
+ACM Transactions on Graphics (SIGGRAPH 2025), 44(4), August 2025.
 <br />
 
 ![MoVer Teaser](https://github.com/jama1017/MoVer/blob/main/assets/mover_teaser.png?raw=true)
@@ -16,6 +16,8 @@ In ACM Transactions on Graphics (SIGGRAPH), 44(4), August 2025. To Appear.
 
 This repository contains the official implementation of MoVer, a domain-specific language based on first-order logic that can verify if various spatio-temporal properties of motion graphics are satisfied by an animation. We provide tools to use MoVer as part of an LLM-based motion graphics animation generation pipeline with verification.
 
+MoVer also includes a converter that extracts animation data as JSON and renders GSAP-based HTML/SVG animations to PNG, SVG, MP4, and GIF.
+
 Check out the [project page](https://mover-dsl.github.io/) for animation and benchmark results.
 
 
@@ -26,65 +28,88 @@ We provide scripts to generate your own dataset of prompts with MoVer. See [`mov
 
 
 ## Installation
-1. Set up a virtual environment with your favorite tool (`python>=3.10`). We recommend `uv` for its speed.
-    ```bash
-    uv venv mover_env --python 3.12 # or your favorite tool, like conda, venv, etc.
-    ```
+MoVer 0.2 supports Python 3.10–3.12.
 
-2. Make sure you have the right version of `pytorch` installed for your system (see [pytorch.org](https://pytorch.org/get-started/locally/)).
+### Full pipeline installation
 
-3. Install MoVer with `pip`
-    ```bash
-    pip install git+https://github.com/jama1017/Jacinle.git && \
-    pip install git+https://github.com/jama1017/Concepts.git && \
-    pip install mover
-    ```
+Install the complete MoVer animation-generation and verification pipeline,
+including the DSL, synthesis, NLG, default OpenAI/Groq model clients, and
+converter:
 
-    or with `uv`
-    ```bash
-    uv pip install git+https://github.com/jama1017/Jacinle.git && \
-    uv pip install git+https://github.com/jama1017/Concepts.git && \
-    uv pip install mover
-    ```
+```bash
+pip install "mover[full]"
+python -m playwright install chromium
+```
 
-4. Alternatively, to install MoVer for development, first clone this repository
-    ```bash
-    git clone https://github.com/jama1017/MoVer.git
-    cd MoVer
-    ```
+Or add it to a uv-managed project:
 
-    and then install the editable version of MoVer
-    ```bash
-    pip install -r requirements.txt && \
-    pip install -e .
+```bash
+uv add "mover[full]"
+uv run playwright install chromium
+```
 
-    # or with uv
-    uv pip install -r requirements.txt && \
-    uv pip install -e .
-    ```
+If you need a platform-specific PyTorch build, install the appropriate build
+from [pytorch.org](https://pytorch.org/get-started/locally/) before installing
+`mover[full]`.
 
-5. To install the necessary browser for MoVer converter, run
-    ```bash
-    playwright install
-    ```
+### Converter-only installation
 
-6. Based on what models you plan to use, add your API keys as environment variables.
-    - They must be named as `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `GROQ_API_KEY`.
-    - MoVer includes APIs to interface with OpenAI, Gemini (via [OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai)), and [Groq](https://groq.com/) by default.
+If you only need the converter:
 
-7. (Optional) If you plan to run locally-hosted models, install the following dependencies:
-    - Install `ollama` if you plan to use ollama.
-    - Install `vLLM` if you plan to use vLLM.
+```bash
+pip install mover
+python -m playwright install chromium
+```
 
-8. (Optional) We support rendering animations to video with OpenCV as `.mp4` files, but the video produced might have limited compatibility because of codec issues. If `ffmpeg` is installed on your system, our converter will automatically use it to convert rendered videos.
+When adding MoVer to a uv-managed project:
+
+```bash
+uv add mover
+uv run playwright install chromium
+```
+
+Chromium is installed separately because Playwright must download a browser
+matching its Python package.
+
+### Model-provider and media extras
+
+- The full profile includes OpenAI-compatible clients (OpenAI, Gemini, and
+  remote vLLM servers) and Groq. Set `OPENAI_API_KEY`, `GEMINI_API_KEY`, or
+  `GROQ_API_KEY` for the provider you select.
+- Add Ollama with `pip install "mover[full,ollama]"`.
+- Add Google Vertex authentication with
+  `pip install "mover[full,vertex]"`.
+- Provider-only extras `mover[openai]` and `mover[groq]` are available for
+  direct use of the model client. MoVer connects to vLLM over its
+  OpenAI-compatible HTTP API; it does not install a vLLM server.
+- GIF output requires a working system installation of
+  [FFmpeg](https://ffmpeg.org/).
+- MP4 output uses FFmpeg when available. For MP4 output without FFmpeg, install
+  the OpenCV fallback with `pip install "mover[media]"`. It is already included
+  by `mover[full]`.
+
+### Development installation
+
+```bash
+git clone https://github.com/jama1017/MoVer.git
+cd MoVer
+
+# pip
+pip install -e ".[full]"
+
+# or uv (also installs the development dependency group)
+uv sync --extra full
+
+python -m playwright install chromium
+```
 
 
-## Quick Start
+## Full pipeline quick start
 ![MoVer Pipeline](https://github.com/jama1017/MoVer/blob/main/assets/mover_pipeline.png?raw=true)
 <br />
 
 ### Starter Example
-Once you have installed MoVer, clone this repository to get access to the `examples/` directory, where we have prepared some examples for you to try out. By default, OpenAI models are used, so make sure you have stored your API key as environment variables (must be named `OPENAI_API_KEY`). Or you can change the config file to use other models (see `examples/configs/` for examples).
+Once you have installed `mover[full]`, clone this repository to get access to the `examples/` directory, where we have prepared some examples for you to try out. By default, OpenAI models are used, so make sure you have stored your API key as environment variables (must be named `OPENAI_API_KEY`). Or you can change the config file to use other models (see `examples/configs/` for examples).
 
 First, to get things started, from the root directory of this repository, run the following command to generate some simple animations with the LLM-based MoVer pipeline (using [`examples/configs/config_starter.yaml`](examples/configs/config_starter.yaml)): 
 ```bash
@@ -142,14 +167,18 @@ python -m playwright install chromium
 Convert an animation using an available local port:
 
 ```bash
-python -m mover.converter.mover_converter animation.html 0 \
+mover-convert animation.html 0 \
   --output-dir output \
   --save-keyframes \
   --save-for-comparison \
   --save-animated-properties
 ```
 
-Add `--create-video --format mp4`, `gif`, `png`, or `svg` to render media or
+Port `0` asks the operating system to select an available local port. The
+original `python -m mover.converter.mover_converter` invocation remains
+supported.
+
+Add `--create-video --format mp4`, `gif`, `png`, or `svg` to create media or
 per-frame output. The default is 60 FPS; `--video-fps` controls JSON sampling
 and rendered output sampling together.
 
@@ -161,10 +190,19 @@ The converter writes:
 - `<stem>_animation.mp4` or `<stem>_animation.gif`
 - `<stem>_animation_<fps>_png/` or `<stem>_animation_<fps>_svg/`
 
+The Python capture API also supports in-memory PNG frames as normalized NumPy
+arrays and in-memory SVG frames as text streams. Repeated capture restores the
+page’s capture state between runs.
+
+MoVer preserves its existing selected-timeline behavior: `vis.js` assigns a
+global `tl` to `tl_to_use` when `tl` exists, otherwise it uses
+`gsap.globalTimeline`. Explicit caller-selected timelines and browser pooling
+are not part of 0.2.0.
+
 GIF output requires a working FFmpeg installation. MP4 uses FFmpeg when
-available and otherwise falls back to validated OpenCV output. When the
-converter serves an HTML file, relative converter assets come from the
-installed MoVer package.
+available and otherwise uses the validated OpenCV fallback from `mover[media]`
+or `mover[full]`. When the converter serves an HTML file, relative converter
+assets come from the installed MoVer package.
 
 ### MoVer DSL
 The MoVer DSL is designed with predicates corresponding to spatial-temporal concepts that people commonly use in natural language to describe motions. For example, for the following animation prompt:

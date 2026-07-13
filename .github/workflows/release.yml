@@ -1,0 +1,277 @@
+name: Release artifacts
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  release:
+    types:
+      - published
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and inspect artifacts
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install build Python
+        run: uv python install 3.12
+
+      - name: Verify lockfile
+        run: uv lock --check
+
+      - name: Build wheel and sdist
+        run: uv build --clear --no-sources
+
+      - name: Check package metadata
+        run: uvx twine check dist/*
+
+      - name: Rebuild wheel from sdist
+        shell: bash
+        run: |
+          uv build \
+            --wheel \
+            --no-sources \
+            --out-dir "${RUNNER_TEMP}/rebuilt" \
+            dist/mover-0.2.0.tar.gz
+
+      - name: Compare artifact manifests
+        shell: bash
+        run: |
+          python tests/check_release_artifacts.py \
+            --wheel dist/mover-0.2.0-py3-none-any.whl \
+            --sdist dist/mover-0.2.0.tar.gz \
+            --rebuilt-wheel "${RUNNER_TEMP}/rebuilt/mover-0.2.0-py3-none-any.whl"
+
+      - name: Upload tested distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: mover-dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  profile:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }} / ${{ matrix.profile }}
+    needs:
+      - build
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - ubuntu-24.04
+        python:
+          - "3.10"
+          - "3.12"
+        profile:
+          - minimal
+          - full
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out release tests
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+
+      - name: Assert release architecture
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "macOS" ]]; then
+            test "$(uname -m)" = "arm64"
+          else
+            test "$(uname -m)" = "x86_64"
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Download built distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: mover-dist
+          path: ${{ runner.temp }}/dist
+
+      - name: Create isolated environment
+        shell: bash
+        run: |
+          uv venv --python "${{ matrix.python }}" "${RUNNER_TEMP}/mover-venv"
+          echo "${RUNNER_TEMP}/mover-venv/bin" >> "${GITHUB_PATH}"
+          echo "VIRTUAL_ENV=${RUNNER_TEMP}/mover-venv" >> "${GITHUB_ENV}"
+
+      - name: Install minimal wheel
+        if: matrix.profile == 'minimal'
+        shell: bash
+        run: |
+          uv pip install "${RUNNER_TEMP}/dist/mover-0.2.0-py3-none-any.whl"
+
+      - name: Install full wheel
+        if: matrix.profile == 'full'
+        shell: bash
+        run: |
+          uv pip install \
+            "mover[full] @ file://${RUNNER_TEMP}/dist/mover-0.2.0-py3-none-any.whl"
+
+      - name: Check installed dependencies
+        run: uv pip check
+
+      - name: Install FFmpeg when missing
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            if [[ "${RUNNER_OS}" == "macOS" ]]; then
+              brew install ffmpeg
+            else
+              sudo apt-get update
+              sudo apt-get install --yes ffmpeg
+            fi
+          fi
+          ffmpeg -version
+
+      - name: Run installed-profile smoke test
+        shell: bash
+        run: |
+          python tests/release_profile_smoke.py \
+            --profile "${{ matrix.profile }}" \
+            --repo-root "${GITHUB_WORKSPACE}"
+
+      - name: Install Chromium
+        if: matrix.profile == 'minimal'
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            python -m playwright install --with-deps chromium
+          else
+            python -m playwright install chromium
+          fi
+
+      - name: Run converter artifact tests
+        if: matrix.profile == 'minimal'
+        shell: bash
+        env:
+          MOVER_REQUIRE_BROWSER: "1"
+          PYTHONPATH: ${{ github.workspace }}/tests
+        run: |
+          python -m unittest \
+            test_animation_prompt_assets \
+            test_converter_capture \
+            test_converter_dom \
+            test_mover_querier \
+            test_transform_types \
+            -v
+
+      - name: Run full-profile media tests
+        if: matrix.profile == 'full'
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tests
+        run: |
+          python -m unittest \
+            test_animation_prompt_assets \
+            test_converter_capture.OutputNamingTest \
+            test_transform_types \
+            -v
+
+      - name: Verify installed commands
+        shell: bash
+        run: |
+          mover-convert --help
+          python -m mover.converter.mover_converter --help
+
+  provider:
+    name: Provider extra / ${{ matrix.extra }}
+    needs:
+      - build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        extra:
+          - groq
+          - ollama
+          - openai
+          - vertex
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Download built distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: mover-dist
+          path: ${{ runner.temp }}/dist
+
+      - name: Create isolated provider environment
+        shell: bash
+        run: |
+          uv venv --python 3.12 "${RUNNER_TEMP}/provider-venv"
+          echo "${RUNNER_TEMP}/provider-venv/bin" >> "${GITHUB_PATH}"
+          echo "VIRTUAL_ENV=${RUNNER_TEMP}/provider-venv" >> "${GITHUB_ENV}"
+
+      - name: Install provider extra
+        shell: bash
+        run: |
+          uv pip install \
+            "mover[${{ matrix.extra }}] @ file://${RUNNER_TEMP}/dist/mover-0.2.0-py3-none-any.whl"
+          uv pip check
+
+      - name: Verify provider imports
+        shell: bash
+        run: |
+          case "${{ matrix.extra }}" in
+            groq)
+              python -c "import groq"
+              ;;
+            ollama)
+              python -c "import ollama"
+              ;;
+            openai)
+              python -c "import openai"
+              ;;
+            vertex)
+              python -c "import google.auth, google.auth.transport.requests, openai"
+              ;;
+          esac
+
+  publish:
+    name: Publish to PyPI
+    if: github.event_name == 'release'
+    needs:
+      - build
+      - profile
+      - provider
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mover/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download tested distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: mover-dist
+          path: dist
+
+      - name: Publish tested distribution
+        uses: pypa/gh-action-pypi-publish@release/v1

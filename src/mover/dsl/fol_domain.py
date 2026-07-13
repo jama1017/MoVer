@@ -1,7 +1,16 @@
-from concepts.dsl.dsl_types import ValueType, ConstantType, BOOL, FLOAT32, VectorValueType, ObjectType
-from concepts.dsl.dsl_functions import Function, FunctionTyping
-from concepts.dsl.function_domain import FunctionDomain
 import ast
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="The MoVer DSL",
+    modules={"jacinle": "jacinle", "torch": "torch"},
+)
+
+from mover._vendor.concepts.dsl.dsl_types import ValueType, ConstantType, BOOL, FLOAT32, VectorValueType, ObjectType
+from mover._vendor.concepts.dsl.dsl_functions import Function, FunctionTyping
+from mover._vendor.concepts.dsl.function_domain import FunctionDomain
 
 from mover.dsl.transform_types import TransformType
 

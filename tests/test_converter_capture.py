@@ -1,12 +1,13 @@
 import io
+import importlib
 import inspect
+import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import cv2
 import numpy as np
 from PIL import Image
 
@@ -19,6 +20,27 @@ from mover.converter.mover_converter import (
     parse_args,
     run_conversion,
 )
+
+
+OPTIONAL_JSON_FIXTURE = """<!doctype html>
+<html>
+<head>
+    <script src="./gsap.min.js"></script>
+</head>
+<body>
+    <svg width="40" height="40" viewBox="0 0 40 40">
+        <rect id="square" x="5" y="5" width="10" height="10" fill="black"/>
+    </svg>
+    <script>
+        const square = document.getElementById("square");
+        const tl = gsap.timeline({ paused: true });
+        tl.to(square, { x: 10, duration: 0.1, ease: "none" });
+    </script>
+    <script src="./vis.js"></script>
+    <script src="./convert.js"></script>
+</body>
+</html>
+"""
 
 
 def make_png_bytes() -> bytes:
@@ -283,6 +305,10 @@ class OutputNamingTest(unittest.TestCase):
             self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
 
     @patch("mover.converter.mover_converter.subprocess.run")
+    @unittest.skipUnless(
+        importlib.util.find_spec("cv2") is not None,
+        "OpenCV fallback requires mover[media] or mover[full]",
+    )
     def test_mp4_keeps_valid_opencv_output_when_ffmpeg_fails(
         self,
         mock_run,
@@ -307,6 +333,7 @@ class OutputNamingTest(unittest.TestCase):
             self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
             self.assertFalse((Path(temp_dir) / "animation.ffmpeg.mp4").exists())
 
+            cv2 = importlib.import_module("cv2")
             capture = cv2.VideoCapture(str(output_path))
             try:
                 self.assertTrue(capture.isOpened())
@@ -320,13 +347,15 @@ class OutputNamingTest(unittest.TestCase):
         "mover.converter.mover_converter.subprocess.run",
         side_effect=FileNotFoundError,
     )
-    @patch("mover.converter.mover_converter.cv2.VideoWriter")
+    @patch("mover.converter.mover_converter._load_opencv")
     def test_mp4_reports_opencv_writer_failure(
         self,
-        mock_writer,
+        mock_load_opencv,
         _mock_run,
     ) -> None:
-        mock_writer.return_value.isOpened.return_value = False
+        mock_load_opencv.return_value.VideoWriter.return_value.isOpened.return_value = (
+            False
+        )
         frame = np.zeros((16, 16, 3), dtype=np.uint8)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -344,6 +373,112 @@ class OutputNamingTest(unittest.TestCase):
 
             self.assertFalse(output_path.exists())
             self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
+
+    @patch("mover.converter.mover_converter._load_opencv")
+    @patch("mover.converter.mover_converter.subprocess.run")
+    def test_ffmpeg_mp4_does_not_load_opencv(
+        self,
+        mock_run,
+        mock_load_opencv,
+    ) -> None:
+        def run_ffmpeg(command, **kwargs):
+            if "-version" not in command and "-f" in command and "rawvideo" in command:
+                Path(command[-1]).write_bytes(b"fake-mp4")
+            return subprocess.CompletedProcess(command, 0)
+
+        mock_run.side_effect = run_ffmpeg
+        mock_load_opencv.side_effect = AssertionError("OpenCV should not load")
+        frame = np.zeros((16, 16, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "animation.mp4"
+            create_video_from_frames(
+                [frame],
+                str(output_path),
+                fps=5,
+                output_format="mp4",
+            )
+
+            self.assertEqual(output_path.read_bytes(), b"fake-mp4")
+            mock_load_opencv.assert_not_called()
+
+    @patch(
+        "mover.converter.mover_converter.subprocess.run",
+        side_effect=FileNotFoundError,
+    )
+    @patch("mover.converter.mover_converter.importlib.import_module")
+    def test_missing_mp4_fallback_recommends_media_extra(
+        self,
+        mock_import_module,
+        _mock_run,
+    ) -> None:
+        mock_import_module.side_effect = ModuleNotFoundError(
+            "No module named 'cv2'",
+            name="cv2",
+        )
+        frame = np.zeros((16, 16, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "animation.mp4"
+            with self.assertRaisesRegex(RuntimeError, r"mover\[media\]"):
+                create_video_from_frames(
+                    [frame],
+                    str(output_path),
+                    fps=5,
+                    output_format="mp4",
+                )
+            self.assertFalse(output_path.exists())
+
+
+class OptionalJsonOutputIntegrationTest(unittest.TestCase):
+    def test_all_documented_json_outputs_are_written(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            html_path = root / "optional_json.html"
+            output_dir = root / "output"
+            html_path.write_text(OPTIONAL_JSON_FIXTURE, encoding="utf-8")
+
+            convert_animation(
+                str(html_path),
+                port=0,
+                save_keyframes=True,
+                save_for_comparison=True,
+                save_animated_properties=True,
+                output_dir=str(output_dir),
+                video_fps=10,
+            )
+
+            expected_files = {
+                "optional_json_data.json",
+                "optional_json_data_keyframes.json",
+                "optional_json_data_rendered.json",
+                "optional_json_properties.json",
+            }
+            self.assertEqual(
+                {path.name for path in output_dir.glob("*.json")},
+                expected_files,
+            )
+
+            main_data = json.loads(
+                (output_dir / "optional_json_data.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            rendered_data = json.loads(
+                (output_dir / "optional_json_data_rendered.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            properties = json.loads(
+                (output_dir / "optional_json_properties.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            self.assertEqual(main_data["info"]["fps"], 10)
+            self.assertEqual(rendered_data["info"]["fps"], 10)
+            self.assertIn("square", properties)
+            self.assertTrue(properties["square"])
 
 
 if __name__ == "__main__":

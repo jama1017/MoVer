@@ -5,6 +5,15 @@ import copy
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from collections import OrderedDict
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="MoVer prompt generation",
+    modules={"pyrealb": "pyrealb"},
+)
+
 from pyrealb import loadEn
 import re
 from mover.nlg.sentence_generation.vocab import Vocab

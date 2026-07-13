@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=64.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mover"
-version = "0.1.5"
+version = "0.2.0"
 description = "Official implementation of MoVer: Motion Verification for Motion Graphics Animations"
 readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+requires-python = ">=3.10,<3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Jiaju Ma", email = "jiajuma@stanford.edu" },
 ]
@@ -18,32 +19,25 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Multimedia :: Graphics",
 ]
 dependencies = [
-    "fastapi==0.115.14",
-    "groq",
-    "Jinja2",
-    "numpy",
-    "openai",
-    "opencv-contrib-python==4.11.0.86",
-    "Pillow",
-    "playwright",
-    "protobuf",
-    "PyYAML",
-    "treelib",
-    "uvicorn==0.35.0",
-    "torch",
-    "torchvision",
-    "ipykernel>=6.29.5",
-    "pyrealb",
+    "fastapi>=0.115.14,<1",
+    "numpy>=2.2.6,<3",
+    "Pillow>=11.3,<13",
+    "playwright>=1.53,<2",
+    "uvicorn>=0.35,<1",
 ]
 
 [project.urls]
 Homepage = "https://mover-dsl.github.io/"
 Repository = "https://github.com/jama1017/MoVer"
 "Bug Tracker" = "https://github.com/jama1017/MoVer/issues"
+
+[project.scripts]
+mover-convert = "mover.converter.mover_converter:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -55,29 +49,83 @@ include = ["mover", "mover.*"]
 exclude = ["tests*", "mover.composers*"]
 
 [tool.setuptools.package-data]
-"mover" = [
-    "assets/*",
-    "assets/**/*",
-    "*/assets/*",
-    "*/assets/**/*",
-    "**/assets/*",
-    "**/assets/**/*",
-    "**/*.html",
-    "**/*.css",
-    "**/*.js",
-    "**/*.json",
+"mover.converter" = [
+    "assets/EasePack.min.js",
+    "assets/MotionPathPlugin.min.js",
+    "assets/api.js",
+    "assets/convert.js",
+    "assets/grid.svg",
+    "assets/gsap.min.js",
+    "assets/index.css",
+    "assets/property_registry.json",
+    "assets/vis.js",
 ]
-
-[tool.setuptools.exclude-package-data]
-"mover" = ["composers/**"]
-
-[dependency-groups]
-dev = [
-    "tree-sitter>=0.24.0",
-    "tree-sitter-language-pack>=0.8.0",
+"mover.dsl" = [
+    "assets/correction_msg_template.md",
+]
+"mover.nlg" = [
+    "assets/sentence_patterns.json",
+    "assets/vocab.json",
+]
+"mover.synthesizers" = [
+    "assets/sys_msg_animation_synthesizer.md",
+    "assets/sys_msg_animation_synthesizer_with_implementation.md",
+    "assets/sys_msg_mover_synthesizer.md",
+    "assets/sys_msg_prompt_rewriter.md",
+    "assets/template.html",
+]
+"mover._vendor.concepts" = [
+    "LICENSE",
+    "VENDORED.md",
+]
+"mover._vendor.torch_index" = [
+    "LICENSE",
+    "VENDORED.md",
 ]
 
 [project.optional-dependencies]
-local = [
-    "ollama-python",
+full = [
+    "groq>=1.5,<2",
+    "jacinle>=1.0.4,<2",
+    "Jinja2>=3.1.6,<4",
+    "lark>=1.3.1,<2",
+    "openai>=2.45,<3",
+    "opencv-python-headless>=4.11,<6",
+    "pyrealb>=3.2.4,<4",
+    "PyYAML>=6.0.2,<7",
+    "torch>=2.7.1,<3",
+    "treelib>=1.8,<2",
+]
+media = [
+    "opencv-python-headless>=4.11,<6",
+]
+openai = [
+    "openai>=2.45,<3",
+]
+groq = [
+    "groq>=1.5,<2",
+]
+ollama = [
+    "ollama>=0.6.2,<1",
+]
+vertex = [
+    "google-auth[requests]>=2.40,<3",
+    "openai>=2.45,<3",
+]
+
+[dependency-groups]
+dev = [
+    "groq>=1.5,<2",
+    "tree-sitter>=0.24.0",
+    "tree-sitter-language-pack>=0.8.0",
+    "ipykernel>=6.29.5",
+    "jacinle>=1.0.4,<2",
+    "Jinja2>=3.1.6,<4",
+    "lark>=1.3.1,<2",
+    "openai>=2.45,<3",
+    "opencv-python-headless>=4.11,<6",
+    "pyrealb>=3.2.4,<4",
+    "PyYAML>=6.0.2,<7",
+    "torch>=2.7.1,<3",
+    "treelib>=1.8,<2",
 ]

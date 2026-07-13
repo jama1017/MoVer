@@ -4,6 +4,15 @@ Unified vocabulary management for motion NLG.
 import json
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="MoVer natural-language generation",
+    modules={"pyrealb": "pyrealb"},
+)
+
 from pyrealb import Adv, PP, V, N, A, D, P, NP, C, CP, VP, loadEn, addToLexicon
 
 class LazyPyRealB:
