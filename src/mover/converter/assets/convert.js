@@ -154,7 +154,7 @@ function captureGsapAnimationState(animation) {
     };
 }
 
-function restoreGsapAnimationState(state) {
+function restoreGsapAnimationState(state, suppressEvents = true) {
     if (!state) {
         return;
     }
@@ -165,9 +165,9 @@ function restoreGsapAnimationState(state) {
     }
     if (time !== null) {
         if (usesTotalTime) {
-            animation.totalTime(time, true);
+            animation.totalTime(time, suppressEvents);
         } else {
-            animation.time(time, true);
+            animation.time(time, suppressEvents);
         }
     }
     if (paused !== null && typeof animation.paused === "function") {
@@ -253,6 +253,52 @@ function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
 
 const MOVER_BATCH_FRAME_ATTRIBUTE = "data-mover-batch-frame";
 let moverBatchCaptureState = null;
+let moverServerCaptureState = null;
+
+function beginServerDrivenCapture() {
+    if (moverServerCaptureState !== null) {
+        throw new Error("Server-driven capture is already active");
+    }
+    if (typeof tl_to_use === "undefined" || !tl_to_use) {
+        throw new Error("Animation timeline is not initialized");
+    }
+
+    const devtools = Array.from(new Set([
+        ...document.querySelectorAll("#GSDevTools"),
+        ...document.querySelectorAll('[class*="gs-dev-tools"]'),
+    ]));
+    moverServerCaptureState = {
+        timelineState: captureGsapAnimationState(tl_to_use),
+        devtools: devtools.map(element => ({
+            element,
+            style: element.getAttribute("style"),
+        })),
+    };
+    devtools.forEach(element => {
+        element.style.setProperty("display", "none", "important");
+    });
+    return true;
+}
+
+function restoreServerDrivenCapture() {
+    const state = moverServerCaptureState;
+    moverServerCaptureState = null;
+    if (!state) {
+        return false;
+    }
+
+    state.devtools.forEach(({ element, style }) => {
+        if (style === null) {
+            element.removeAttribute("style");
+        } else {
+            element.setAttribute("style", style);
+        }
+    });
+    // Re-run deterministic callbacks so callback-derived SVG state matches
+    // the restored selected-timeline time.
+    restoreGsapAnimationState(state.timelineState, false);
+    return true;
+}
 
 function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
     if (!Array.isArray(seekTimes)) {

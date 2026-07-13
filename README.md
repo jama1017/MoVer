@@ -131,6 +131,41 @@ To understand how MoVer's LLM-based animation synthesizer generates SVG animatio
 - Each SVG animation is saved as an HTML file (see `examples/`). To properly render the HTML file, first get all the files in `src/mover/converter/assets/` and put them in the same directory as the HTML file. Then open the HTML file in your browser to see the animation in action.
 - With `--create-video`, the converter can render animation outputs with `--format mp4`, `--format gif`, `--format png`, or `--format svg`. PNG and SVG formats write per-frame files, and `--video-fps` controls both output frame sampling and JSON sampling.
 
+### Converter
+
+Install the Chromium version matched to Playwright:
+
+```bash
+python -m playwright install chromium
+```
+
+Convert an animation using an available local port:
+
+```bash
+python -m mover.converter.mover_converter animation.html 0 \
+  --output-dir output \
+  --save-keyframes \
+  --save-for-comparison \
+  --save-animated-properties
+```
+
+Add `--create-video --format mp4`, `gif`, `png`, or `svg` to render media or
+per-frame output. The default is 60 FPS; `--video-fps` controls JSON sampling
+and rendered output sampling together.
+
+The converter writes:
+
+- `<stem>_data.json`
+- Optional `<stem>_data_keyframes.json`, `<stem>_data_rendered.json`, and
+  `<stem>_properties.json`
+- `<stem>_animation.mp4` or `<stem>_animation.gif`
+- `<stem>_animation_<fps>_png/` or `<stem>_animation_<fps>_svg/`
+
+GIF output requires a working FFmpeg installation. MP4 uses FFmpeg when
+available and otherwise falls back to validated OpenCV output. When the
+converter serves an HTML file, relative converter assets come from the
+installed MoVer package.
+
 ### MoVer DSL
 The MoVer DSL is designed with predicates corresponding to spatial-temporal concepts that people commonly use in natural language to describe motions. For example, for the following animation prompt:
 > Translate the black square upwards by 100 px

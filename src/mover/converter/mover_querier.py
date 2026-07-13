@@ -1,7 +1,7 @@
 """
 MoVer Querier - Experimental SVGPT utility for querying animation positions.
 
-This module provides functionality to find the time(s) when an element is at 
+This module provides functionality to find the time(s) when an element is at
 specific positions during animation in HTML files containing GSAP animations.
 """
 
@@ -52,16 +52,16 @@ async def run_get_position(html_file: str, target_centroids: List[dict], element
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
     base_name = html_path.stem
-    
+
     app = setup_fastapi_app(html_file, html_dir, base_name)
 
     # Configure uvicorn
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
     server = uvicorn.Server(config)
-    
+
     # Start the server as a task
     server_task = asyncio.create_task(server.serve())
-    
+
     try:
         await _wait_for_server_start(server, server_task)
         actual_port = _get_bound_port(server)
@@ -90,7 +90,7 @@ async def run_get_position(html_file: str, target_centroids: List[dict], element
                 )
             finally:
                 await browser.close()
-            
+
     finally:
         # Stop the server
         server.should_exit = True
@@ -101,14 +101,14 @@ async def run_get_position(html_file: str, target_centroids: List[dict], element
 def get_position_in_time(html_file: str, target_centroids: List[dict], element_id: str, tolerance: float = 0.1, port: int = 3014) -> List[List[dict]]:
     """
     Find the time(s) when an element is at specific positions during animation.
-    
+
     Args:
         html_file (str): Path to the HTML file containing the GSAP animation
         target_centroids (List[dict]): List of target positions with 'x' and 'y' keys (e.g., [{'x': 100, 'y': 200}, {'x': 300, 'y': 150}])
         element_id (str): ID of the element to track
         tolerance (float, optional): Tolerance for position matching in pixels. Defaults to 0.1.
         port (int, optional): Port to run the server on. Defaults to 3014.
-    
+
     Returns:
         List[List[dict]]: List of match lists, one for each centroid, with 'time' and 'error' keys
     """
@@ -129,13 +129,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
-    
+
     # Parse multiple centroids separated by semicolons
     target_centroids = []
     for centroid_str in args.target_centroids.split(';'):
         x_str, y_str = centroid_str.split(',')
         target_centroids.append({'x': float(x_str), 'y': float(y_str)})
-    
+
     matches = get_position_in_time(args.html_file, target_centroids, args.element_id, args.tolerance, args.port)
     print(json.dumps(matches, indent=2))
 

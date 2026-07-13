@@ -8,7 +8,7 @@
 - Avoid doing calculations yourself. Use the functions provided in the API documentation to do the calculations whenever possible.
 - Always use `document.querySelector()` to select SVG elements.
 - Always create the timeline element with `createTimeline()`
-- Always use `getCenterPosition(element)` to get the position of an element, and use `getSize(element)` to get the width and height of an element. 
+- Always use `getCenterPosition(element)` to get the position of an element, and use `getSize(element)` to get the width and height of an element.
 - Only use `getProperty()` to obtain attributes other than position and size of an element.
 - Strategically compute the transform origin of rotation and scaling motions might be important to move an object to the specified spatial location. You might need to compute the midpoint between some two points or the distance between some two points.
 - Within the JavaScript code, annotate the lines of animation code with exact phrases from the animation prompt. Enclose each annotation with ** as a comment starting with //.
@@ -41,7 +41,7 @@ The output JavaScript code should follow the following template:
 Motion Vocabulary
     Motion type: "translate"
         Example verbs:
-            "translate", "shift", "displace", "slide", "relocate", "transfer", "transport", 
+            "translate", "shift", "displace", "slide", "relocate", "transfer", "transport",
             "convey", "glide", "reposition", "dislocate", "drift", "propel", "push", "migrate", "traverse", "travel", "advance"
         Example verbs with upward direction:
             "lift", "elevate", "raise", "heighten", "ascend"
@@ -80,17 +80,17 @@ Motion Vocabulary
  * @example
  * // Translates the square element 25 pixels to the right and 25 pixels down over 1 second.
  * translate(tl, square, 1, 25, 25, 0);
- * 
+ *
  * // Translates the square element 25 pixels to the right and 25 pixels down over 1 second, starting at 2 seconds into the timeline. The easing function used is power1.out.
  * translate(tl, square, 1, 25, 25, 2, 'power1.out');
- * 
+ *
  * // Translates the square to move in a square path counterclockwise. Each side of the square path is 100px wide and takes 1 second.
  * translate(tl, square, 1, -100, 0, 0);
  * translate(tl, square, 1, 0, 100, 1);
  * translate(tl, square, 1, 100, 0, 2);
  * translate(tl, square, 1, 0, -100, 3);
  */
-function translate(timeline, element, duration, toX, toY, startTime, easing = 'none') 
+function translate(timeline, element, duration, toX, toY, startTime, easing = 'none')
 
 /**
  * This function adds a tween to the timeline to scale an SVG element.
@@ -109,21 +109,21 @@ function translate(timeline, element, duration, toX, toY, startTime, easing = 'n
  * @example
  * // Scale the square element to double its size over 1 second from its center.
  * scale(tl, square, 1, 2, 2, 0);
- * 
+ *
  * // Scale the square element to double along x-axis and triple along y-axis over 2 second from its center, starting at 2 seconds into the timeline. The easing function used is power1.out.
  * scale(tl, square, 1, 2, 3, 2, '50%', '50%', null, null, 'power1.out');
- * 
+ *
  * // Scale the square element to be 4 times as large from its bottom right corner over 1 second.
  * scale(tl, square, 1, 4, 4, 0, '100%', '100%');
- * 
+ *
  * // Scale the square element to be 5 times as large along the x-axis and 2 times as large along the y-axis from (100px, 100px) in the SVG document over 2 second.
  * scale(tl, square, 2, 5, 2, 0, null, null, 100, 100);
- * 
+ *
  * // Scale the square element to 0 in both x-axis and y-axis over 1 second from its center. Then, scale it back up to 1 in both x-axis and y-axis over 1 second from the point (300, 200).
  * scale(tl, square, 1, 0, 0, 0);
  * scale(tl, square, 1, 1, 1, 1, null, null, 300, 200);
  */
-function scale(timeline, element, duration, scaleX, scaleY, startTime, elementTransformOriginX = '50%', elementTransformOriginY = '50%', absoluteTransformOriginX = null, absoluteTransformOriginY = null, easing = 'none') 
+function scale(timeline, element, duration, scaleX, scaleY, startTime, elementTransformOriginX = '50%', elementTransformOriginY = '50%', absoluteTransformOriginX = null, absoluteTransformOriginY = null, easing = 'none')
 
 /**
  * This function adds a tween to the timeline to rotate an SVG element.
@@ -141,20 +141,20 @@ function scale(timeline, element, duration, scaleX, scaleY, startTime, elementTr
  * @example
  * // Rotate the square element by 45 degrees (clockwise) from its center over 1 second.
  * rotate(tl, square, 1, 45, 0);
- * 
+ *
  * // Rotate the square element by -90 degrees (counterclockwise) from its bottom right corner over 1 second, starting at 1.5 seconds into the timeline. The easing function used is power1.out.
  * rotate(tl, square, 1, -90, 1.5, '100%', '100%', null, null, 'power1.out');
- * 
+ *
  * // Rotate the square element by 135 degrees (clockwise) from (300, 300) in the SVG document over 2 second.
  * rotate(tl, square, 2, 135, 0, null, null, 300, 300);
  */
-function rotate(timeline, element, duration, angle, startTime, elementTransformOriginX = '50%', elementTransformOriginY = '50%', absoluteTransformOriginX = null, absoluteTransformOriginY = null, easing = 'none') 
+function rotate(timeline, element, duration, angle, startTime, elementTransformOriginX = '50%', elementTransformOriginY = '50%', absoluteTransformOriginX = null, absoluteTransformOriginY = null, easing = 'none')
 
 /**
  * Creates a timeline object that stores and sequences all the animation tweens.
  * @returns {object} The created timeline.
  */
-function createTimeline() 
+function createTimeline()
 
 /**
  * Retrieves the value of a specified property for a given SVG element. Do not use this function to get the size and position of an element. Use getSize and getCenterPosition instead.
@@ -162,7 +162,7 @@ function createTimeline()
  * @param {string} property - The name of the property to retrieve.
  * @returns {*} The value of the specified property.
  */
-function getProperty(elementID, property) 
+function getProperty(elementID, property)
 
 /**
  * This function immediately sets properties on an SVG element without animation. Use this function to initialize or instantly update element properties such as position, scale, rotation, opacity, etc. This is useful for setting up initial states before animating.
@@ -174,7 +174,7 @@ function getProperty(elementID, property)
  * // Here, x, y values set the translation of the element (displacement from its original position at the start of the animation).
  * setProperty(circle, { x: 100, y: 200 });
  */
-function setProperty(element, properties) 
+function setProperty(element, properties)
 
 /**
  * This function returns the x and y coordinates of the center of an SVG element in pixels.
@@ -184,7 +184,7 @@ function setProperty(element, properties)
  * // Get the y coordinate of the center of the square element.
  * const squareY = getCenterPosition(square).y;
  */
-function getCenterPosition(element) 
+function getCenterPosition(element)
 
 /**
  * This function returns the width and height of an SVG element in pixels.
@@ -193,11 +193,11 @@ function getCenterPosition(element)
  * @example
  * // Get the width of the square element.
  * const squareWidth = getSize(square).width;
- * 
+ *
  * // Get the radius of the circle element (don't use getProperty() to get the radius).
  * const circleRadius = getSize(circle).width / 2; // Can also use height instead of width.
  */
-function getSize(element) 
+function getSize(element)
 
 
 ```

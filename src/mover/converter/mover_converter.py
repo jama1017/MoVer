@@ -64,6 +64,22 @@ async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
         )
 
 
+def _validate_mp4(path: Path) -> None:
+    """Raise when ``path`` is not a nonempty, decodable MP4."""
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(f"MP4 output is missing or empty: {path}")
+
+    capture = cv2.VideoCapture(str(path))
+    try:
+        if not capture.isOpened():
+            raise RuntimeError(f"MP4 output could not be opened: {path}")
+        decoded, frame = capture.read()
+        if not decoded or frame is None:
+            raise RuntimeError(f"MP4 output contains no decodable frame: {path}")
+    finally:
+        capture.release()
+
+
 def create_video_from_frames(
     frames: List[np.ndarray],
     output_path: str,
@@ -89,47 +105,75 @@ def create_video_from_frames(
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
     ## Always create MP4 first
-    temp_mp4_path = Path(output_path).with_suffix('.temp.mp4')
+    final_output_path = Path(output_path)
+    temp_mp4_path = final_output_path.with_suffix('.temp.mp4')
+    temp_mp4_path.unlink(missing_ok=True)
     out = cv2.VideoWriter(str(temp_mp4_path), fourcc, fps, (width, height))
 
     try:
-        for frame in frames:
-            out.write(frame)
-    finally:
-        out.release()
+        try:
+            if not out.isOpened():
+                raise RuntimeError("OpenCV could not initialize the MP4 writer")
+            for frame in frames:
+                out.write(frame)
+        finally:
+            out.release()
+    except Exception:
+        temp_mp4_path.unlink(missing_ok=True)
+        raise
+
+    try:
+        _validate_mp4(temp_mp4_path)
+    except RuntimeError:
+        temp_mp4_path.unlink(missing_ok=True)
+        raise
 
     if output_format == "gif":
+        temp_gif_path = final_output_path.with_suffix('.temp.gif')
+        temp_gif_path.unlink(missing_ok=True)
         try:
             subprocess.run([
                 'ffmpeg', '-y',
                 '-i', str(temp_mp4_path),
                 '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
-                str(output_path)
+                str(temp_gif_path)
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            temp_mp4_path.unlink()
+            if not temp_gif_path.is_file() or temp_gif_path.stat().st_size == 0:
+                raise RuntimeError("FFmpeg produced an empty GIF")
+            temp_gif_path.replace(final_output_path)
             return
-        except (subprocess.SubprocessError, FileNotFoundError):
-            temp_mp4_path.unlink(missing_ok=True)
+        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError):
+            temp_gif_path.unlink(missing_ok=True)
             raise RuntimeError(
                 "GIF output requires FFmpeg with GIF palette support"
             )
+        finally:
+            temp_mp4_path.unlink(missing_ok=True)
 
     if ffmpeg_available:
-        ## Preserve the existing MP4 conversion behavior.
-        subprocess.run([
-            'ffmpeg', '-y',
-            '-i', str(temp_mp4_path),
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-crf', '23',
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            str(output_path)
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        temp_mp4_path.unlink()
-    elif temp_mp4_path.exists():
-        print("ffmpeg not found, skipping conversion step")
-        temp_mp4_path.rename(output_path)
+        ffmpeg_output_path = final_output_path.with_suffix('.ffmpeg.mp4')
+        ffmpeg_output_path.unlink(missing_ok=True)
+        try:
+            subprocess.run([
+                'ffmpeg', '-y',
+                '-i', str(temp_mp4_path),
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',
+                '-crf', '23',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                str(ffmpeg_output_path)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            _validate_mp4(ffmpeg_output_path)
+            ffmpeg_output_path.replace(final_output_path)
+            temp_mp4_path.unlink(missing_ok=True)
+            return
+        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError):
+            ffmpeg_output_path.unlink(missing_ok=True)
+
+    print("Using OpenCV MP4 output because FFmpeg conversion is unavailable")
+    temp_mp4_path.replace(final_output_path)
+    _validate_mp4(final_output_path)
 
 
 async def capture_frames_server_driven(
@@ -165,14 +209,6 @@ async def capture_frames_server_driven(
 
     print(f"Capturing {capture_frame_count} frames at {fps} FPS (duration: {duration}s)")
 
-    ## Hide GSDevTools if present (it overlays on top of the SVG).
-    await page.evaluate("""() => {
-        const devtools = document.querySelector('#GSDevTools');
-        if (devtools) devtools.style.display = 'none';
-        // Also hide any GSDevTools container elements
-        document.querySelectorAll('[class*="gs-dev-tools"]').forEach(el => el.style.display = 'none');
-    }""")
-
     ## Locate the SVG element once.
     svg_element = page.locator("svg").first
     await svg_element.wait_for(state="visible")
@@ -196,7 +232,9 @@ async def capture_frames_server_driven(
             for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
                 existing_frame.unlink()
 
+    capture_started = False
     try:
+        capture_started = await page.evaluate("beginServerDrivenCapture()")
         for frame_index in range(capture_frame_count):
             await page.evaluate(f"() => seekToFrame({frame_index}, {fps}, {duration})")
 
@@ -241,6 +279,11 @@ async def capture_frames_server_driven(
 
         ## Encode video using FFmpeg directly from image sequence.
         assert frames_dir is not None
+        final_output_path = Path(output_path)
+        ffmpeg_output_path = final_output_path.with_suffix(
+            '.ffmpeg.gif' if output_format == "gif" else '.ffmpeg.mp4'
+        )
+        ffmpeg_output_path.unlink(missing_ok=True)
         try:
             subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
 
@@ -250,8 +293,13 @@ async def capture_frames_server_driven(
                     '-framerate', str(fps),
                     '-i', str(frames_dir / 'frame_%06d.png'),
                     '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
-                    str(output_path)
+                    str(ffmpeg_output_path)
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                if (
+                    not ffmpeg_output_path.is_file()
+                    or ffmpeg_output_path.stat().st_size == 0
+                ):
+                    raise RuntimeError("FFmpeg produced an empty GIF")
             else:
                 subprocess.run([
                     'ffmpeg', '-y',
@@ -262,12 +310,15 @@ async def capture_frames_server_driven(
                     '-crf', '23',
                     '-pix_fmt', 'yuv420p',
                     '-movflags', '+faststart',
-                    str(output_path)
+                    str(ffmpeg_output_path)
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                _validate_mp4(ffmpeg_output_path)
 
+            ffmpeg_output_path.replace(final_output_path)
             print(f"Video saved to {output_path}")
 
-        except (subprocess.SubprocessError, FileNotFoundError) as error:
+        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError) as error:
+            ffmpeg_output_path.unlink(missing_ok=True)
             if output_format == "gif":
                 raise RuntimeError(
                     "GIF output requires a working FFmpeg installation"
@@ -290,8 +341,12 @@ async def capture_frames_server_driven(
             print(f"Video saved to {output_path} (OpenCV fallback)")
 
     finally:
-        if cleanup_temp_dir and frames_dir is not None:
-            shutil.rmtree(frames_dir, ignore_errors=True)
+        try:
+            if capture_started:
+                await page.evaluate("restoreServerDrivenCapture()")
+        finally:
+            if cleanup_temp_dir and frames_dir is not None:
+                shutil.rmtree(frames_dir, ignore_errors=True)
 
 
 def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4", output_dir: str | None = None, save_animated_properties: bool = False) -> FastAPI:
@@ -317,7 +372,7 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_form
             json.dump(json_data, f, indent=4)
         print("SAVED TO LOCAL")
         return JSONResponse(content={"status": "success"})
-    
+
     @app.post("/convert-js-to-keyframes-json")
     async def convert_js_to_keyframes_json(request: Request):
         """Convert JavaScript keyframes data to JSON and save it."""
@@ -407,17 +462,17 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
     base_name = html_path.stem
-    
+
     ## Ensure output_dir exists if specified
     if output_dir:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-    
+
     app = setup_fastapi_app(html_file, html_dir, base_name, output_format, output_dir, save_animated_properties)
 
     # Configure uvicorn
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
     server = uvicorn.Server(config)
-    
+
     # Start the server as a task
     server_task = asyncio.create_task(server.serve())
 
@@ -429,7 +484,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         async with async_playwright() as p:
             browser = await p.chromium.launch()
             page = await browser.new_page()
-            
+
             # Set up console logging and network error handlers
             page.on("console", lambda msg: handle_console_message(msg, print_console))
             page.on("response", lambda response: handle_network_response(response, print_console))
@@ -470,7 +525,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
                 )
 
             await browser.close()
-            
+
     finally:
         # Stop the server
         server.should_exit = True
@@ -502,7 +557,7 @@ async def capture_json_animation(actual_port: int, comparison_properties: dict |
 def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create animation output.
-    
+
     Args:
         html_file (str): Path to the HTML file containing the GSAP animation
         port (int, optional): Port to run the server on. Use 0 to let the OS choose

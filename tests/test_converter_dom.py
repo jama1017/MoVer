@@ -468,6 +468,97 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rendered["finalAttribute"], "0")
         self.assertGreaterEqual(rendered["updateCount"], 4)
 
+    async def test_server_capture_restores_page_state_after_success_and_failure(
+        self,
+    ) -> None:
+        await self.page.add_script_tag(path=str(GSAP_JS))
+        await self.page.evaluate(
+            """() => {
+                const shape = document.querySelector("#shape");
+                window.captureProxy = { value: 0 };
+                window.tl_to_use = gsap.timeline({ paused: true });
+                tl_to_use.to(captureProxy, {
+                    value: 100,
+                    duration: 1,
+                    ease: "none",
+                    onUpdate: () => {
+                        shape.setAttribute(
+                            "data-progress",
+                            String(Math.round(captureProxy.value))
+                        );
+                    },
+                });
+                tl_to_use.totalTime(0.25, false).pause();
+
+                const devtools = document.createElement("div");
+                devtools.id = "GSDevTools";
+                devtools.setAttribute(
+                    "style",
+                    "display: flex !important; color: red"
+                );
+                document.body.appendChild(devtools);
+
+                const controls = document.createElement("div");
+                controls.className = "gs-dev-tools-controls";
+                controls.setAttribute(
+                    "style",
+                    "display: grid !important; color: blue"
+                );
+                document.body.appendChild(controls);
+            }"""
+        )
+
+        snapshot_js = """() => ({
+            timelineTime: tl_to_use.totalTime(),
+            timelinePaused: tl_to_use.paused(),
+            progress: document.querySelector("#shape")
+                .getAttribute("data-progress"),
+            devtoolsStyle: document.querySelector("#GSDevTools")
+                .getAttribute("style"),
+            controlsStyle: document.querySelector(".gs-dev-tools-controls")
+                .getAttribute("style"),
+        })"""
+        initial_state = await self.page.evaluate(snapshot_js)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            frames, duration = await capture_frames_server_driven(
+                self.page,
+                str(Path(temp_dir) / "unused"),
+                fps=2,
+                output_format="svg",
+                in_memory=True,
+            )
+        self.assertEqual(duration, 1)
+        self.assertEqual(len(frames), 3)
+        self.assertEqual(await self.page.evaluate(snapshot_js), initial_state)
+
+        await self.page.evaluate(
+            """() => {
+                tl_to_use.totalTime(0.4, false).pause();
+                window.originalSeekToFrame = window.seekToFrame;
+                window.seekToFrame = () => {
+                    throw new Error("injected server capture failure");
+                };
+            }"""
+        )
+        failure_state = await self.page.evaluate(snapshot_js)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(
+                Exception,
+                "injected server capture failure",
+            ):
+                await capture_frames_server_driven(
+                    self.page,
+                    str(Path(temp_dir) / "unused"),
+                    fps=2,
+                    output_format="svg",
+                    in_memory=True,
+                )
+        self.assertEqual(await self.page.evaluate(snapshot_js), failure_state)
+        await self.page.evaluate(
+            "() => { window.seekToFrame = window.originalSeekToFrame; }"
+        )
+
     async def test_real_browser_server_capture_and_grid_suppression(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             default_output = Path(temp_dir) / "default" / "frames"

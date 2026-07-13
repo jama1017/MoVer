@@ -9,7 +9,7 @@
 - Avoid doing calculations yourself. Use the functions provided in the API documentation and/or GSAP to do the calculations whenever possible.
 - Always use `document.querySelector()` to select SVG elements.
 - Always create the timeline element with `createTimeline()`
-- Always use `getCenterPosition(element)` to get the position of an element, and use `getSize(element)` to get the width and height of an element. 
+- Always use `getCenterPosition(element)` to get the position of an element, and use `getSize(element)` to get the width and height of an element.
 - Only use `getProperty()` to obtain attributes other than position and size of an element.
 - Strategically compute the transform origin of rotation and scaling motions might be important to move an object to the specified spatial location. You might need to compute the midpoint between some two points or the distance between some two points.
 - Within the JavaScript code, annotate the lines of animation code with exact phrases from the animation prompt. Enclose each annotation with ** as a comment starting with //.
@@ -53,10 +53,10 @@ The output JavaScript code should follow the following template:
  * @example
  * // Translates the square element 25 pixels to the right and 25 pixels down over 1 second.
  * translate(tl, square, 1, 25, 25, 0);
- * 
+ *
  * // Translates the square element 25 pixels to the right and 25 pixels down over 1 second, starting at 2 seconds into the timeline. The easing function used is power1.out.
  * translate(tl, square, 1, 25, 25, 2, 'power1.out');
- * 
+ *
  * // Translates the square to move in a square path counterclockwise. Each side of the square path is 100px wide and takes 1 second.
  * translate(tl, square, 1, -100, 0, 0);
  * translate(tl, square, 1, 0, 100, 1);
@@ -100,16 +100,16 @@ function translate(timeline, element, duration, toX, toY, startTime, easing = 'n
  * @example
  * // Scale the square element to double its size over 1 second from its center.
  * scale(tl, square, 1, 2, 2, 0);
- * 
+ *
  * // Scale the square element to double along x-axis and triple along y-axis over 2 second from its center, starting at 2 seconds into the timeline. The easing function used is power1.out.
  * scale(tl, square, 1, 2, 3, 2, '50%', '50%', null, null, 'power1.out');
- * 
+ *
  * // Scale the square element to be 4 times as large from its bottom right corner over 1 second.
  * scale(tl, square, 1, 4, 4, 0, '100%', '100%');
- * 
+ *
  * // Scale the square element to be 5 times as large along the x-axis and 2 times as large along the y-axis from (100px, 100px) in the SVG document over 2 second.
  * scale(tl, square, 2, 5, 2, 0, null, null, 100, 100);
- * 
+ *
  * // Scale the square element to 0 in both x-axis and y-axis over 1 second from its center. Then, scale it back up to 1 in both x-axis and y-axis over 1 second from the point (300, 200).
  * scale(tl, square, 1, 0, 0, 0);
  * scale(tl, square, 1, 1, 1, 1, null, null, 300, 200);
@@ -158,10 +158,10 @@ function scale(timeline, element, duration, scaleX, scaleY, startTime, elementTr
  * @example
  * // Rotate the square element by 45 degrees (clockwise) from its center over 1 second.
  * rotate(tl, square, 1, 45, 0);
- * 
+ *
  * // Rotate the square element by -90 degrees (counterclockwise) from its bottom right corner over 1 second, starting at 1.5 seconds into the timeline. The easing function used is power1.out.
  * rotate(tl, square, 1, -90, 1.5, '100%', '100%', null, null, 'power1.out');
- * 
+ *
  * // Rotate the square element by 135 degrees (clockwise) from (300, 300) in the SVG document over 2 second.
  * rotate(tl, square, 2, 135, 0, null, null, 300, 300);
  */
@@ -248,7 +248,7 @@ function getCenterPosition(element) {
  * @example
  * // Get the width of the square element.
  * const squareWidth = getSize(square).width;
- * 
+ *
  * // Get the radius of the circle element (don't use getProperty() to get the radius).
  * const circleRadius = getSize(circle).width / 2; // Can also use height instead of width.
  */

@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -280,6 +281,70 @@ class OutputNamingTest(unittest.TestCase):
                 )
             self.assertFalse(output_path.exists())
             self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
+
+    @patch("mover.converter.mover_converter.subprocess.run")
+    def test_mp4_keeps_valid_opencv_output_when_ffmpeg_fails(
+        self,
+        mock_run,
+    ) -> None:
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(["ffmpeg", "-version"], 0),
+            subprocess.CalledProcessError(1, ["ffmpeg"]),
+        ]
+        frame = np.zeros((16, 16, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "animation.mp4"
+            create_video_from_frames(
+                [frame],
+                str(output_path),
+                fps=5,
+                output_format="mp4",
+            )
+
+            self.assertTrue(output_path.is_file())
+            self.assertGreater(output_path.stat().st_size, 0)
+            self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
+            self.assertFalse((Path(temp_dir) / "animation.ffmpeg.mp4").exists())
+
+            capture = cv2.VideoCapture(str(output_path))
+            try:
+                self.assertTrue(capture.isOpened())
+                decoded, decoded_frame = capture.read()
+                self.assertTrue(decoded)
+                self.assertIsNotNone(decoded_frame)
+            finally:
+                capture.release()
+
+    @patch(
+        "mover.converter.mover_converter.subprocess.run",
+        side_effect=FileNotFoundError,
+    )
+    @patch("mover.converter.mover_converter.cv2.VideoWriter")
+    def test_mp4_reports_opencv_writer_failure(
+        self,
+        mock_writer,
+        _mock_run,
+    ) -> None:
+        mock_writer.return_value.isOpened.return_value = False
+        frame = np.zeros((16, 16, 3), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "animation.mp4"
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "could not initialize",
+            ):
+                create_video_from_frames(
+                    [frame],
+                    str(output_path),
+                    fps=5,
+                    output_format="mp4",
+                )
+
+            self.assertFalse(output_path.exists())
+            self.assertFalse((Path(temp_dir) / "animation.temp.mp4").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
