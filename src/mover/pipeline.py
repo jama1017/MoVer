@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from mover.synthesizers.animation_synthesizer import AnimationSynthesizer
 from mover.synthesizers.mover_synthesizer import MoverSynthesizer
 from mover.dsl.mover_verifier import MoverVerifier
-from mover.converter.mover_converter import convert_animation
+from mover.converter.mover_converter import DEFAULT_FPS, convert_animation
 
 
 class BasePipeline(ABC):
@@ -218,7 +218,13 @@ class AnimationPipeline(BasePipeline):
             ## Convert HTML to animation data
             animation_data_file = f"{chat_id_name}_{num_iter}_data.json"
             animation_data_path = chat_dir_path / animation_data_file
-            convert_animation(str(html_file_path), server_config['port'], server_config['create_video'])
+            convert_animation(
+                str(html_file_path),
+                int(server_config['port']),
+                server_config['create_video'],
+                output_format=server_config.get('output_format', 'mp4'),
+                video_fps=int(server_config.get('video_fps', DEFAULT_FPS)),
+            )
             
             ## Verify animation
             try:

@@ -16,11 +16,17 @@ mover_dataset/*
 !mover_dataset/create_dataset.py
 !mover_dataset/dataset_scene_graphs.py
 src/mover.egg-info/
+src/mover/converter/assets/library*.js
 debug.ipynb
 tests/*
 !tests/test_mover_synthesizer.py
 !tests/test_mover_fol_generator.py
 !tests/test_prompt_generation.py
+!tests/test_converter_capture.py
+!tests/test_converter_dom.py
+!tests/test_animation_prompt_assets.py
+!tests/test_mover_querier.py
+!tests/test_transform_types.py
 
 ## Outputs
 example_output/
@@ -44,3 +50,7 @@ examples/svg/eye.svg
 !examples/translate_right*
 !examples/two_black_squares*
 !examples/teaser_hi*
+.cursor/*
+.vscode/*
+.github/*
+plans/*

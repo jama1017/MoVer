@@ -8,6 +8,7 @@ import numpy as np
 from treelib import Node, Tree
 from mover.dsl.utils import *
 from mover.dsl.fol_domain import transform_type_to_string, transform_string_to_type, TransformType, parse_motion_type_expr, parse_motion_type_string
+from mover.dsl.transform_types import iter_atomic_transform_types
 from typing import Any, Optional, Tuple, List, Dict
 
 import concepts.dsl.expression as E
@@ -315,7 +316,9 @@ class FOLExecutor(FunctionDomainExecutor):
                 type_intersection = motion_type_enum & transform_types_enum
                 if type_intersection != TransformType.NONE:
                     list_is_transform_in_dir = []
-                    for curr_type_intersection in type_intersection:
+                    for curr_type_intersection in iter_atomic_transform_types(
+                        type_intersection
+                    ):
                         motion_type = transform_string_to_type[curr_type_intersection.name.lower()]
                         transform_direction = element['{}_directions'.format(transform_type_to_string[motion_type])][i]
                         match motion_type:
@@ -405,7 +408,9 @@ class FOLExecutor(FunctionDomainExecutor):
                     transform_types_enum = parse_motion_type_string(element['transformTypes'][i])
                     type_intersection = motion_type_enum & transform_types_enum
                     if type_intersection != TransformType.NONE:
-                        for curr_type_intersection in type_intersection:
+                        for curr_type_intersection in iter_atomic_transform_types(
+                            type_intersection
+                        ):
                             motion_type = transform_string_to_type[curr_type_intersection.name.lower()]
                             match motion_type:
                                 case "T":
@@ -631,7 +636,7 @@ class FOLExecutor(FunctionDomainExecutor):
             tweens = element['tweens']
             
             for tween in tweens:
-                for motion_type in motion_type_enum:
+                for motion_type in iter_atomic_transform_types(motion_type_enum):
                     if motion_type.name.lower() == tween['type']:
                         duration = tween['duration']
                         if np.isclose(duration, target_duration):

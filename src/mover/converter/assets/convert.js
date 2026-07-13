@@ -1,13 +1,41 @@
 var svgRef = document.getElementsByTagName('svg')[0]
-tl_to_use.eventCallback("onComplete", convert);
+
+// Interprets the getter recipe from the property registry.
+function getSpatialValue(elem, propSpec) {
+    if (propSpec.getter === "transformedPts") return getTransformedAABB(elem);
+    if (propSpec.getter === "gsap") {
+        let val = gsap.getProperty(elem, propSpec.gsapProp);
+        return propSpec.negate ? -val : val;
+    }
+    console.warn(`Unknown getter type: ${propSpec.getter}`);
+    return null;
+}
+
+// Non-graphical SVG elements that don't have geometry methods (getCTM, getBBox, etc.)
+const NON_GRAPHICAL_TAGS = new Set([
+    'style', 'defs', 'script', 'title', 'desc', 'metadata',
+    'lineargradient', 'radialgradient', 'pattern', 'clippath',
+    'filter', 'fegaussianblur', 'feblend', 'fecolormatrix', 'fecomponenttransfer',
+    'fecomposite', 'feconvolvematrix', 'fediffuselighting', 'fedisplacementmap',
+    'feflood', 'feimage', 'femerge', 'femorphology', 'feoffset', 'fespecularlighting',
+    'fetile', 'feturbulence', 'symbol', 'marker', 'stop'
+]);
+
+function isGraphicalElement(element) {
+    if (!element || !element.tagName) return false;
+    return !NON_GRAPHICAL_TAGS.has(element.tagName.toLowerCase());
+}
 
 function getAllAnimatedElements(svgRef) {
     let svgChildren = svgRef.children
     let res = []
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
+        if (!isGraphicalElement(child)) continue;
+        if (child.id && child.id.includes("ignore")) continue;
         let tweens = tl_to_use.getTweensOf(child)
         if (child != undefined && tweens.length > 0) {
+            console.log(`Animated element found: <${child.tagName}> id="${child.id}" (${tweens.length} tween${tweens.length > 1 ? 's' : ''})`)
             res.push(child)
         }
     }
@@ -19,22 +47,526 @@ function getNonAnimatedElements(svgRef) {
     let res = []
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
+        if (!isGraphicalElement(child)) continue;
+        if (child.id && child.id.includes("ignore")) continue;
         let tweens = tl_to_use.getTweensOf(child)
-        if (child != undefined && tweens.length == 0) {
+        if (child != undefined && tweens.length == 0 && child.tagName.toLowerCase() !== "mask") {
+            console.log(`Non-animated element found: <${child.tagName}> id="${child.id}"`)
             res.push(child)
         }
     }
     return res
 }
 
-function getAllTransformationValues(animatedElems) {
-    let animDuration = tl_to_use.duration();
-    let fps = 60;
-    let steps = Math.ceil(animDuration * fps);
+
+function getAnimationInfo(fps = 60) {
+    const sampleFps = Number(fps);
+    if (!Number.isFinite(sampleFps) || sampleFps <= 0) {
+        throw new Error(`Invalid fps: ${fps}`);
+    }
+
+    const INFINITE_THRESHOLD = 1000000;
+    let animDuration = tl_to_use.totalDuration();
+    console.log("Timeline total duration:", animDuration);
+
+    if (!isFinite(animDuration) || animDuration > INFINITE_THRESHOLD) {
+        console.warn("Detected infinite timeline (duration > 1M seconds), calculating single cycle duration...");
+        const children = tl_to_use.getChildren();
+        let maxEndTime = 0;
+
+        children.forEach(child => {
+            const childStart = child.startTime();
+            const childDuration = child.duration();
+            const baseEnd = childStart + childDuration;
+
+            if (isFinite(baseEnd) && baseEnd > maxEndTime) {
+                maxEndTime = baseEnd;
+            }
+        });
+
+        if (maxEndTime > 0 && maxEndTime < INFINITE_THRESHOLD) {
+            animDuration = maxEndTime;
+            console.log("Calculated single cycle duration:", animDuration);
+        } else {
+            animDuration = 10;
+            console.warn("Could not calculate cycle duration, falling back to 10 seconds");
+        }
+    }
+
+    const steps = Math.ceil(animDuration * sampleFps);
+    return { animDuration, fps: sampleFps, steps };
+}
+
+
+function getSeekTime(frameIndex, fps, animDuration) {
+    const time = frameIndex / fps;
+    return time > animDuration ? animDuration : time;
+}
+
+
+// Get SVG dimensions for viewport sizing
+function getSvgDimensions() {
+    const svgElement = document.querySelector("svg");
+    const width = svgElement.width.baseVal.value || svgElement.viewBox.baseVal.width || 800;
+    const height = svgElement.height.baseVal.value || svgElement.viewBox.baseVal.height || 600;
+    return { width, height };
+}
+
+
+function getSvgSceneSize(svgElement = svgRef) {
+    const getExplicitDimension = name => {
+        const value = svgElement.getAttribute(name);
+        if (value === null || value.trim() === "") {
+            return null;
+        }
+        const normalized = value.trim();
+        if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:px)?$/.test(
+            normalized
+        )) {
+            return null;
+        }
+        const parsed = parseFloat(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
+    };
+    const viewBox = (
+        svgElement.hasAttribute("viewBox")
+        && svgElement.viewBox
+        && svgElement.viewBox.baseVal
+    );
+    const width = getExplicitDimension("width");
+    const height = getExplicitDimension("height");
+    return {
+        width: width !== null
+            ? width
+            : (viewBox && Number.isFinite(viewBox.width) ? viewBox.width : null),
+        height: height !== null
+            ? height
+            : (viewBox && Number.isFinite(viewBox.height) ? viewBox.height : null),
+    };
+}
+
+
+// Seek timeline to a specific frame index. Returns true if successful.
+function seekToFrame(frameIndex, fps, animDuration) {
+    const seekTime = getSeekTime(frameIndex, fps, animDuration);
+    return seekToTime(seekTime);
+}
+
+function seekToTime(seekTime) {
+    if (!Number.isFinite(seekTime)) {
+        throw new TypeError("seekTime must be a finite number");
+    }
+
+    tl_to_use.seek(seekTime, false);
+    tl_to_use.pause();
+    return true;
+}
+
+function captureGsapAnimationState(animation) {
+    if (!animation) {
+        return null;
+    }
+    const usesTotalTime = typeof animation.totalTime === "function";
+    const time = usesTotalTime
+        ? animation.totalTime()
+        : (typeof animation.time === "function" ? animation.time() : null);
+    return {
+        animation,
+        time,
+        usesTotalTime,
+        paused: (
+            typeof animation.paused === "function"
+                ? animation.paused()
+                : null
+        ),
+        timeScale: (
+            typeof animation.timeScale === "function"
+                ? animation.timeScale()
+                : null
+        ),
+    };
+}
+
+function restoreGsapAnimationState(state, suppressEvents = true) {
+    if (!state) {
+        return;
+    }
+    const { animation, time, usesTotalTime, paused, timeScale } = state;
+    animation.pause();
+    if (timeScale !== null) {
+        animation.timeScale(timeScale);
+    }
+    if (time !== null) {
+        if (usesTotalTime) {
+            animation.totalTime(time, suppressEvents);
+        } else {
+            animation.time(time, suppressEvents);
+        }
+    }
+    if (paused !== null && typeof animation.paused === "function") {
+        animation.paused(paused);
+    }
+}
+
+function uniquifySvgResourceIds(svg, prefix) {
+    const map = new Map();
+    const resourceTags = new Set([
+        "lineargradient",
+        "radialgradient",
+        "filter",
+        "clippath",
+        "mask",
+        "pattern",
+        "marker",
+        "symbol",
+    ]);
+    const elements = [svg, ...svg.querySelectorAll("*")];
+
+    elements
+        .filter(element => (
+            element.id && (
+                element.closest("defs")
+                || resourceTags.has(element.tagName.toLowerCase())
+            )
+        ))
+        .forEach(element => {
+            const oldId = element.id;
+            const newId = `${prefix}_${oldId}`;
+            map.set(oldId, newId);
+            element.id = newId;
+        });
+
+    const rewriteReferences = value => {
+        let rewritten = value;
+        for (const [oldId, newId] of map) {
+            const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            rewritten = rewritten.replace(
+                new RegExp(
+                    `url\\(\\s*(['"]?)[^'")]*#${escapedId}\\1\\s*\\)`,
+                    "g",
+                ),
+                (_match, quote) => `url(${quote}#${newId}${quote})`,
+            );
+            if (rewritten === `#${oldId}`) {
+                rewritten = `#${newId}`;
+            }
+        }
+        return rewritten;
+    };
+
+    elements.forEach(element => {
+        for (const attr of element.getAttributeNames()) {
+            element.setAttribute(
+                attr,
+                rewriteReferences(element.getAttribute(attr)),
+            );
+        }
+    });
+    svg.querySelectorAll("style").forEach(styleElement => {
+        let css = rewriteReferences(styleElement.textContent);
+        for (const [oldId, newId] of map) {
+            const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            css = css.replace(
+                new RegExp(`#${escapedId}(?![\\w-])`, "g"),
+                `#${newId}`,
+            );
+        }
+        styleElement.textContent = css;
+    });
+}
+
+function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
+    const info = getAnimationInfo();
+    const times = [];
+    for (let i = 0; i <= info.steps; i++) {
+        times.push(getSeekTime(i, info.fps, info.animDuration));
+    }
+    return seekAndAppendToDomUsingTimes(times, frameSize, hideGrid)
+}
+
+const MOVER_BATCH_FRAME_ATTRIBUTE = "data-mover-batch-frame";
+let moverBatchCaptureState = null;
+let moverServerCaptureState = null;
+
+function beginServerDrivenCapture() {
+    if (moverServerCaptureState !== null) {
+        throw new Error("Server-driven capture is already active");
+    }
+    if (typeof tl_to_use === "undefined" || !tl_to_use) {
+        throw new Error("Animation timeline is not initialized");
+    }
+
+    const devtools = Array.from(new Set([
+        ...document.querySelectorAll("#GSDevTools"),
+        ...document.querySelectorAll('[class*="gs-dev-tools"]'),
+    ]));
+    moverServerCaptureState = {
+        timelineState: captureGsapAnimationState(tl_to_use),
+        devtools: devtools.map(element => ({
+            element,
+            style: element.getAttribute("style"),
+        })),
+    };
+    devtools.forEach(element => {
+        element.style.setProperty("display", "none", "important");
+    });
+    return true;
+}
+
+function restoreServerDrivenCapture() {
+    const state = moverServerCaptureState;
+    moverServerCaptureState = null;
+    if (!state) {
+        return false;
+    }
+
+    state.devtools.forEach(({ element, style }) => {
+        if (style === null) {
+            element.removeAttribute("style");
+        } else {
+            element.setAttribute("style", style);
+        }
+    });
+    // Re-run deterministic callbacks so callback-derived SVG state matches
+    // the restored selected-timeline time.
+    restoreGsapAnimationState(state.timelineState, false);
+    return true;
+}
+
+function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
+    if (!Array.isArray(seekTimes)) {
+        throw new TypeError("seekTimes must be an array");
+    }
+    if (!seekTimes.every(time => Number.isFinite(time))) {
+        throw new TypeError("seekTimes must contain only finite numbers");
+    }
+    if (!Number.isInteger(frameSize) || frameSize <= 0) {
+        throw new TypeError("frameSize must be a positive integer");
+    }
+    if (typeof hideGrid !== "boolean") {
+        throw new TypeError("hideGrid must be a boolean");
+    }
+    if (!document.documentElement || !document.body) {
+        throw new Error("Cannot append frames without a document root and body");
+    }
+    if (typeof tl_to_use === "undefined" || !tl_to_use
+        || typeof tl_to_use.seek !== "function" || typeof tl_to_use.pause !== "function") {
+        throw new Error("Animation timeline is not initialized");
+    }
+
+    const srcSvg = document.querySelector("body > svg");
+    if (!srcSvg) {
+        throw new Error("No direct child SVG element found");
+    }
+    if (moverBatchCaptureState !== null) {
+        throw new Error("Batch frames are already appended; call resetSeekAndAppend first");
+    }
+    if (seekTimes.length === 0) {
+        return 0;
+    }
+
+    const root = document.documentElement;
+    const body = document.body;
+    const hiddenElements = Array.from(body.children)
+        .filter(element => element.tagName !== "SCRIPT")
+        .map(element => ({
+            element,
+            style: element.getAttribute("style"),
+        }));
+    moverBatchCaptureState = {
+        root,
+        rootStyle: root.getAttribute("style"),
+        body,
+        bodyStyle: body.getAttribute("style"),
+        hiddenElements,
+        timelineState: captureGsapAnimationState(tl_to_use),
+        frames: [],
+    };
+
+    try {
+        root.style.setProperty("margin", "0", "important");
+        root.style.setProperty("padding", "0", "important");
+        body.style.setProperty("margin", "0", "important");
+        body.style.setProperty("padding", "0", "important");
+        body.style.setProperty("display", "block", "important");
+
+        for (let i = 0; i < seekTimes.length; i++) {
+            seekToTime(seekTimes[i]);
+
+            const wrapper = document.createElement("div");
+            const svgCopy = srcSvg.cloneNode(true);
+            uniquifySvgResourceIds(svgCopy, `mover_frame_${i}`);
+
+            wrapper.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
+            wrapper.setAttribute("data-mover-frame-size", String(frameSize));
+            wrapper.style.setProperty("width", `${frameSize}px`, "important");
+            wrapper.style.setProperty("height", `${frameSize}px`, "important");
+            wrapper.style.setProperty("overflow", "hidden", "important");
+            wrapper.style.setProperty("display", "block", "important");
+            wrapper.style.setProperty("margin", "0", "important");
+            wrapper.style.setProperty("padding", "0", "important");
+            wrapper.style.setProperty("border", "0", "important");
+            wrapper.style.setProperty("box-sizing", "border-box", "important");
+
+            svgCopy.classList.remove("svg-width-fit-preview-target");
+            svgCopy.style.setProperty("width", `${frameSize}px`, "important");
+            svgCopy.style.setProperty("height", `${frameSize}px`, "important");
+            svgCopy.style.setProperty("display", "block", "important");
+            if (hideGrid) {
+                svgCopy.style.setProperty(
+                    "background-image",
+                    "none",
+                    "important",
+                );
+            }
+
+            wrapper.appendChild(svgCopy);
+            moverBatchCaptureState.frames.push(wrapper);
+            body.appendChild(wrapper);
+        }
+        hiddenElements.forEach(({ element }) => {
+            element.style.setProperty("display", "none", "important");
+        });
+    } catch (error) {
+        resetSeekAndAppend();
+        throw error;
+    }
+
+    return moverBatchCaptureState.frames.length;
+}
+
+function resetSeekAndAppend() {
+    const state = moverBatchCaptureState;
+    moverBatchCaptureState = null;
+
+    if (!state) {
+        document.querySelectorAll(`body > [${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
+            .forEach(frame => frame.remove());
+        return false;
+    }
+
+    state.frames.forEach(frame => frame.remove());
+    state.hiddenElements.forEach(({ element, style }) => {
+        if (style === null) {
+            element.removeAttribute("style");
+        } else {
+            element.setAttribute("style", style);
+        }
+    });
+
+    if (state.bodyStyle === null) {
+        state.body.removeAttribute("style");
+    } else {
+        state.body.setAttribute("style", state.bodyStyle);
+    }
+    if (state.rootStyle === null) {
+        state.root.style.cssText = "";
+        state.root.removeAttribute("style");
+    } else {
+        state.root.setAttribute("style", state.rootStyle);
+    }
+    // Re-run deterministic callbacks so callback-derived SVG state matches
+    // the restored selected-timeline time.
+    restoreGsapAnimationState(state.timelineState, false);
+
+    return true;
+}
+
+
+function convertToKeyframes(allElems) {
+    let res = { "info": {} }
+    res["info"]["scene-size"] = getSvgSceneSize()
+
+    for (let j = 0; j < allElems.length; j++) {
+        let elem = allElems[j]
+        let elemName = elem.id
+        res[elemName] = {}
+    }
+
+    // for each element, get all its tweens, and get start and end time of each tween
+    for (let i = 0; i < allElems.length; i++) {
+        let elem = allElems[i]
+        let elem_tweens = tl_to_use.getTweensOf(elem)
+
+        if (elem_tweens.length > 0) {
+            let elementData = {}
+
+            elem_tweens.forEach(function (tween, index) {
+                let tween_type = tween.data ? tween.data.type : "unknown"
+                let tween_start = tween.startTime()
+                let tween_end = tween.endTime()
+
+                elementData[tween_type] = elementData[tween_type] || {
+                    keyframes: [],
+                    acc_value: [],
+                    ctm: [],
+                    transformedPts: [],
+                    worldOrigin: [],
+                    svgOrigin: tween.vars.svgOrigin || "",
+                    transformOrigin: tween.vars.transformOrigin || ""
+                }
+
+                // Use temporary array to collect times
+                let tempTimes = elementData[tween_type].tempTimes || []
+                tempTimes.push(tween_start, tween_end)
+                elementData[tween_type].tempTimes = tempTimes
+            })
+
+            // Record data for each tween type
+            for (let tween_type in elementData) {
+                if (tween_type === "id") continue
+
+                // Remove duplicates and sort keyframe times
+                elementData[tween_type].keyframes = [...new Set(elementData[tween_type].tempTimes)].sort((a, b) => a - b)
+                delete elementData[tween_type].tempTimes // Clean up temporary array
+
+                // For each keyframe time, seek timeline and record data
+                elementData[tween_type].keyframes.forEach(time => {
+                    tl_to_use.seek(time, false).pause()
+
+                    // Record CTM for all tween types
+                    let ctm = SVGMatrixToPy(elem.getCTM())
+                    elementData[tween_type].ctm.push(ctm)
+
+                    // Record transformedPts for all tween types
+                    let transformedPts = getTransformedAABB(elem)
+                    elementData[tween_type].transformedPts.push(transformedPts)
+
+                    // Record accumulated value based on tween type
+                    let analyzedResult = analyzeFrameMatrixAPI(elem)
+                    switch (tween_type) {
+                        case "translate":
+                            elementData[tween_type].acc_value.push([analyzedResult["translateX_acc"], analyzedResult["translateY_acc"]])
+                            break;
+                        case "rotate":
+                            elementData[tween_type].acc_value.push(analyzedResult["rotate_acc"])
+                            break;
+                        case "scale":
+                            elementData[tween_type].acc_value.push([analyzedResult["scaleX_acc"], analyzedResult["scaleY_acc"]])
+                            break;
+                        case "skew":
+                            elementData[tween_type].acc_value.push([analyzedResult["skewX_acc"], analyzedResult["skewY_acc"]])
+                            break;
+                    }
+
+                    // Record worldOrigin only if NOT translate or unknown
+                    if (tween_type !== "translate" && tween_type !== "unknown") {
+                        elementData[tween_type].worldOrigin.push(analyzedResult["wldOrigin"])
+                    }
+                })
+            }
+            res[elem.id] = elementData
+        }
+    }
+    return res
+}
+
+function getAllTransformationValues(animatedElems, fps = 60) {
+    const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
 
     let res = {}
-    res["info"] = { "duration": animDuration, "fps": fps, "steps": steps }
-    res["info"]["scene-size"] = { "width": parseFloat(svgRef.getAttribute("width")), "height": parseFloat(svgRef.getAttribute("height")) }
+    res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
+    res["info"]["scene-size"] = getSvgSceneSize()
 
     for (let j = 0; j < animatedElems.length; j++) {
         let elem = animatedElems[j]
@@ -49,10 +581,10 @@ function getAllTransformationValues(animatedElems) {
         let elem_tweens = tl_to_use.getTweensOf(elem)
         let tweens_info = []
         elem_tweens.forEach(function (tween) {
-            let tween_type = tween.data.type
+            let tween_type = (tween.data && tween.data.type) ? tween.data.type : 'other'
             let tween_duration = tween.duration()
-            let tween_start = tween.startTime() * fps
-            let tween_end = tween.endTime() * fps
+            let tween_start = tween.startTime() * sampleFps
+            let tween_end = tween.endTime() * sampleFps
             let tween_info = { "type": tween_type, "duration": tween_duration, "start": tween_start, "end": tween_end }
             tweens_info.push(tween_info)
         })
@@ -60,8 +592,7 @@ function getAllTransformationValues(animatedElems) {
     }
 
     for (let i = 0; i < steps + 1; i++) {
-        let seekTime = i / fps > animDuration ? animDuration : i / fps
-        tl_to_use.seek(seekTime).pause()
+        tl_to_use.seek(getSeekTime(i, sampleFps, animDuration), false).pause()
 
         for (let j = 0; j < animatedElems.length; j++) {
             let elem = animatedElems[j]
@@ -69,7 +600,7 @@ function getAllTransformationValues(animatedElems) {
 
             let elemName = elem.id
             let currElemData = res[elemName]
-            
+
             currElemData["transformedPts"] = currElemData["transformedPts"] || [];
             currElemData["transformedPts"].push(getTransformedAABB(elem));
             currElemData["CTM"] = currElemData["CTM"] || [];
@@ -121,7 +652,7 @@ function analyzeFrameMatrixAPI(elem) {
     res["rotate_acc"] = gsap.getProperty(elem, "rotate")
     res["skewX_acc"] = gsap.getProperty(elem, "skewX")
     res["skewY_acc"] = gsap.getProperty(elem, "skewY")
-        
+
     // transform origin
     res["originInput"] = elem._gsap.origin
     res["originIsAbsolute"] = elem._gsap.originIsAbsolute
@@ -149,24 +680,24 @@ function analyzeFrameMatrixAPI(elem) {
 function compute_diff_acc(anim_data) {
     console.log("Computing diff and acc...")
     let steps = anim_data["info"]["steps"]
-    
+
     for (var element_id in anim_data) {
         if (element_id == 'info') {
             continue
         }
 
         // compute diff
-        allowed_keys = ['translateX_acc', 'translateY_acc', 'rotate_acc', 'scaleX_acc', 'scaleY_acc', 'skewX_acc', 'skewY_acc']
-        element = anim_data[element_id]
+        let allowed_keys = ['translateX_acc', 'translateY_acc', 'rotate_acc', 'scaleX_acc', 'scaleY_acc', 'skewX_acc', 'skewY_acc']
+        let element = anim_data[element_id]
         for (var key of allowed_keys) {
             // console.log(key)
-            diff_id = key.replace('_acc', '')
-            curr_acc_values = element[key]
+            let diff_id = key.replace('_acc', '')
+            let curr_acc_values = element[key]
             element[diff_id] = [curr_acc_values[0]]
             for (let i = 1; i < curr_acc_values.length; i++) {
-                prev_acc = curr_acc_values[i-1]
-                curr_acc = curr_acc_values[i]
-                curr_diff = curr_acc - prev_acc
+                let prev_acc = curr_acc_values[i-1]
+                let curr_acc = curr_acc_values[i]
+                let curr_diff = curr_acc - prev_acc
                 if (key.includes('scale')) {
                     curr_diff = curr_acc / prev_acc
                 }
@@ -177,7 +708,7 @@ function compute_diff_acc(anim_data) {
         // transform types
         element["transformTypes"] = []
         for (let i = 0; i < steps + 1; i++) {
-            transformation_types = ""
+            let transformation_types = ""
             if (element["translateX"][i] != 0 || element["translateY"][i] != 0) {
                 transformation_types += "T"
             }
@@ -251,20 +782,20 @@ function createObjectList(animatedElems, non_animatedElems) {
                     elem_data["shape"] = "rectangle"
                 }
                 break;
-                
+
             case "circle":
                 let diameter = parseFloat(elem.getAttribute("r")) * 2
                 var elem_size = [diameter, diameter]
                 elem_data["size"] = elem_size;
                 elem_data["shape"] = "circle"
                 break;
-            
+
             case "path":
                 if (elem.id.includes("letter")) {
                     elem_data["shape"] = elem.id.split("-")[1]
                 }
                 break;
-            
+
             case "defs":
                 continue;
         }
@@ -272,7 +803,7 @@ function createObjectList(animatedElems, non_animatedElems) {
         // fill
         if (elem.hasAttribute("fill")) {
             let fillStr = elem.getAttribute("fill")
-            if (fillStr.includes("#")) {
+            if (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(fillStr.trim())) {
                 elem_data["fill"] = ntc.name(fillStr)[1].toLowerCase()
             } else {
                 elem_data["fill"] = fillStr
@@ -280,7 +811,7 @@ function createObjectList(animatedElems, non_animatedElems) {
         }
 
         objectData.push(elem_data)
-    }        
+    }
     return objectData
 }
 
@@ -340,13 +871,225 @@ function compute_norm(x, y) {
 }
 
 
-async function convert(port=8001){
-    console.log("Converting...")
+function setAllTweensEaseNone(animatedElems) {
+    for (let elem of animatedElems) {
+        let tweens = tl_to_use.getTweensOf(elem);
+        for (let tween of tweens) {
+            tween.vars.ease = "none";
+            if (tween._ease) {
+                tween._ease = gsap.parseEase ? gsap.parseEase("none") : "none";
+            }
+            tween.invalidate();
+        }
+    }
+}
+
+// Helper function to get center position of element at a given time
+function getCenter(elem) {
+    const transformedCorners = getTransformedAABB(elem);
+
+    // Average the four corners to get the center
+    let centerX = 0;
+    let centerY = 0;
+    for (let i = 0; i < transformedCorners.length; i++) {
+        centerX += transformedCorners[i][0];
+        centerY += transformedCorners[i][1];
+    }
+    centerX /= transformedCorners.length;
+    centerY /= transformedCorners.length;
+    return { x: centerX, y: centerY };
+}
+
+// Helper function to calculate distance between two points
+function compute_euclidean_distance(p1, p2) {
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
+    const elem = document.getElementById(elementId);
+    if (!elem) {
+        return null;
+    }
+
+    const { animDuration, fps, steps } = getAnimationInfo(2400);
+
+    // Initialize empty arrays for each centroid
+    let results = [];
+    for (let c = 0; c < targetCentroids.length; c++) {
+        results.push([]);
+    }
+
+    for (let i = 0; i <= steps; i++) {
+        const time = getSeekTime(i, fps, animDuration);
+        tl_to_use.seek(time, false).pause();
+        const center = getCenter(elem);
+
+        // Check against each target centroid
+        for (let c = 0; c < targetCentroids.length; c++) {
+            const targetCentroid = targetCentroids[c];
+            const dist = compute_euclidean_distance(center, targetCentroid);
+
+            // If we're within tolerance, add to matches array for this centroid
+            if (dist <= tolerance) {
+                const match = {
+                    time: time,
+                    error: dist,
+                    info: {
+                        "rotate_acc": gsap.getProperty(elem, "rotate"),
+                        "scale_acc": [gsap.getProperty(elem, "scaleX"), gsap.getProperty(elem, "scaleY")],
+                        "skew_acc": [gsap.getProperty(elem, "skewX"), gsap.getProperty(elem, "skewY")],
+                        "CTM": SVGMatrixToPy(elem.getCTM())
+                    }
+                };
+                results[c].push(match);
+            }
+        }
+    }
+
+    return results;
+}
+
+function extractAnimatedProperties(svgRef, registry) {
+    const aliases = registry.gsapAliases || {};
+    const knownProps = new Set([
+        ...Object.keys(registry.spatial),
+        ...Object.keys(registry.visual),
+        ...Object.keys(registry.svgAttributes),
+        ...Object.keys(aliases),
+    ]);
+    const spatialNames = new Set(Object.keys(registry.spatial));
+
+    tl_to_use.totalProgress(1);
+    tl_to_use.totalProgress(0);
+
+    const result = {};
+    const svgChildren = svgRef.children;
+    for (let i = 0; i < svgChildren.length; i++) {
+        const child = svgChildren[i];
+        if (!isGraphicalElement(child)) continue;
+        if (child.id && child.id.includes("ignore")) continue;
+
+        const tweens = tl_to_use.getTweensOf(child);
+        if (tweens.length === 0) continue;
+
+        const regNames = new Set();
+        let hasSpatial = false;
+        for (const tween of tweens) {
+            for (const key of Object.keys(tween.vars)) {
+                if (key === "attr") {
+                    for (const attrKey of Object.keys(tween.vars.attr)) {
+                        if (knownProps.has(attrKey)) regNames.add(attrKey);
+                    }
+                } else if (knownProps.has(key)) {
+                    const resolved = aliases[key] || [key];
+                    resolved.forEach(n => {
+                        regNames.add(n);
+                        if (spatialNames.has(n)) hasSpatial = true;
+                    });
+                }
+            }
+        }
+        // Only auto-add properties that don't have autoExtract: false
+        if (hasSpatial) {
+            const tpSpec = registry.spatial && registry.spatial["transformedPts"];
+            if (!tpSpec || tpSpec.autoExtract !== false) {
+                regNames.add("transformedPts");
+            }
+        }
+        result[child.id] = [...regNames];
+    }
+    return result;
+}
+
+
+function createRenderedData(allElems, registry, propertyConfig = null, fps = 60) {
+    // registry = property_registry.json (auto-loaded by Python)
+    // propertyConfig = { spatial: ["transformedPts", "rotate", ...],
+    //                    visual: ["fill", "opacity", ...],
+    //                    svgAttributes: ["d", "r"] }
+    // null propertyConfig → use registry.defaults
+
+    const config = propertyConfig || {
+        spatial: registry.defaults.spatial,
+        visual: registry.defaults.visual,
+        svgAttributes: []
+    };
+    const visualProps = config.visual || [];
+
+    const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
+
+    let res = {}
+    res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
+    res["info"]["scene-size"] = getSvgSceneSize()
+
+    for (let j = 0; j < allElems.length; j++) {
+        let elem = allElems[j]
+        let elemName = elem.id
+        res[elemName] = {}
+    }
+
+    // Get comparison properties at each timestep
+    for (let i = 0; i < steps + 1; i++) {
+        seekToTime(getSeekTime(i, sampleFps, animDuration))
+
+        for (let j = 0; j < allElems.length; j++) {
+            let elem = allElems[j]
+            let elemName = elem.id
+            let currElemData = res[elemName]
+
+            // Spatial properties — use getter recipe from registry
+            for (const prop of (config.spatial || [])) {
+                const propSpec = registry.spatial[prop];
+                if (!propSpec) {
+                    console.warn(`Unknown spatial property: ${prop}`);
+                    continue;
+                }
+                currElemData[prop] = currElemData[prop] || [];
+                currElemData[prop].push(getSpatialValue(elem, propSpec));
+            }
+
+            // Visual (CSS computed style) — each property gets its own array
+            if (visualProps.length > 0) {
+                const style = window.getComputedStyle(elem);
+                for (const prop of visualProps) {
+                    currElemData[prop] = currElemData[prop] || [];
+                    currElemData[prop].push(style[prop]);
+                }
+            }
+
+            // SVG attributes — generic, no per-property logic
+            for (const attr of (config.svgAttributes || [])) {
+                currElemData[attr] = currElemData[attr] || [];
+                currElemData[attr].push(elem.getAttribute(attr));
+            }
+        }
+    }
+
+    // Store config in info for downstream consumers
+    res["info"]["propertyConfig"] = config;
+
+    // Reset timeline to start
+    tl_to_use.seek(0, false).pause();
+
+    return res;
+}
+
+async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false, registry=null, comparisonPropertyConfig=null, saveAnimatedProperties=false, fps=60){
+    console.log("Converting...");
+
+    // This ensures dynamically added tweens are present before we gather animation data
+    tl_to_use.totalProgress(1);
+    tl_to_use.totalProgress(0);
 
     let animatedElems = getAllAnimatedElements(svgRef);
+    if (disableEasing) {
+        setAllTweensEaseNone(animatedElems);
+    }
     let nonAnimatedElems = getNonAnimatedElements(svgRef);
     let allElems = [...animatedElems, ...nonAnimatedElems];
-    let animData = getAllTransformationValues(allElems);
+    let animData = getAllTransformationValues(allElems, fps);
     let objectData = createObjectList(animatedElems, nonAnimatedElems)
     animData["info"]["objects"] = objectData
     console.log("port: ", port)
@@ -359,54 +1102,44 @@ async function convert(port=8001){
         body: JSON.stringify(animData)
     })
 
-}
-
-
-async function createVideo(port=8001) {
-    const fps = 60;
-    const totalFrames = Math.ceil(tl_to_use.totalDuration() * fps);
-    const serializer = new XMLSerializer();
-    const frames = [];
-
-    // Step through each frame in the timeline
-    for (let i = 0; i < totalFrames; i++) {
-        tl_to_use.seek(i / fps, false);
-        tl_to_use.pause();
-
-        // Serialize the SVG element to a string for this frame
-        const svgString = serializer.serializeToString(document.querySelector("svg"));
-        frames.push(svgString);
-    }
-
-    console.log("Creating video...");
-
-    try {
-        const response = await fetch(`http://localhost:${port}/create-video`, {
+    if (saveKeyframes) {
+        let keyframesData = convertToKeyframes(allElems);
+        const response_keyframes = await fetch(`http://localhost:${port}/convert-js-to-keyframes-json`, {
             method: 'POST',
             headers: {
                 Accept: "application/json, text/plain, */*",
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({
-                "frames": frames,
-                "totalFrames": totalFrames
-            })
-        });
-
-        const result = await response.json();
-        if (result.success) {
-            console.log(`Video saved successfully to: ${result.path}`);
-        } else {
-            console.error('Failed to create video:', result.error);
-        }
-    } catch (error) {
-        console.error('Error during video creation:', error);
+            body: JSON.stringify(keyframesData)
+        })
     }
 
-    // Reset timeline to start
-    tl_to_use.seek(0);
-    tl_to_use.pause();
+    if (saveForComparison) {
+        let renderedData = createRenderedData(allElems, registry, comparisonPropertyConfig, fps);
+        const response_rendered = await fetch(`http://localhost:${port}/convert-js-to-rendered-json`, {
+            method: 'POST',
+            headers: {
+                Accept: "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(renderedData)
+        })
+    }
+
+    if (saveAnimatedProperties && registry) {
+        let animatedProps = extractAnimatedProperties(svgRef, registry);
+        await fetch(`http://localhost:${port}/save-animated-properties`, {
+            method: 'POST',
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(animatedProps)
+        })
+    }
 }
+
+
+
+
+
 
 
 /* Jiaju Ma: The following code is modified from the ntc.js library. It is used to convert colors to names.
@@ -599,7 +1332,7 @@ var ntc = {
         ["069B81", "Gossamer"],
         ["06A189", "Niagara"],
         ["073A50", "Tarawera"],
-        ["080110", "Jaguar"],
+        ["080110", "Jaguar black"],
         ["081910", "Black Bean"],
         ["082567", "Deep Sapphire"],
         ["088370", "Elf Green"],

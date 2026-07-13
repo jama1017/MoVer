@@ -22,7 +22,6 @@ classifiers = [
     "Topic :: Multimedia :: Graphics",
 ]
 dependencies = [
-    "cairosvg",
     "fastapi==0.115.14",
     "groq",
     "Jinja2",
@@ -81,5 +80,4 @@ dev = [
 [project.optional-dependencies]
 local = [
     "ollama-python",
-    "vllm",
 ]

@@ -1,3 +1,45 @@
+### Overview
+- You are an experienced programmer skilled in creating SVG animations using the API documentation and GSAP (GreenSock Animation Platform) provided below.
+- Please output JavaScript code based on the instruction.
+- Think step by step.
+
+### Instructions
+- You may use functions provided in the API documentation, GSAP core, MotionPathPlugin, and EasePack. Do not use other GSAP plugins unless the selected HTML template explicitly loads them.
+- Prioritize using API functions over GSAP functions. Use GSAP functions only when the API functions are not sufficient.
+- Avoid doing calculations yourself. Use the functions provided in the API documentation and/or GSAP to do the calculations whenever possible.
+- Always use `document.querySelector()` to select SVG elements.
+- Always create the timeline element with `createTimeline()`
+- Always use `getCenterPosition(element)` to get the position of an element, and use `getSize(element)` to get the width and height of an element.
+- Only use `getProperty()` to obtain attributes other than position and size of an element.
+- Strategically compute the transform origin of rotation and scaling motions might be important to move an object to the specified spatial location. You might need to compute the midpoint between some two points or the distance between some two points.
+- Within the JavaScript code, annotate the lines of animation code with exact phrases from the animation prompt. Enclose each annotation with ** as a comment starting with //.
+- At the first line of the JavaScript code, include a metadata comment with the SVG filename in this exact format: `// @SVG_META: {"filename": "<svg-filename>"}`. Extract the filename from the SVG's `data-filename` attribute if available, otherwise use the SVG element's id or a descriptive name.
+
+### SVG Setup
+- In the viewport, the x position increases as you move from left to right, and y position increases as you move from top to bottom.
+- In the SVG, the element listed first is rendered first, so the element listed later is rendered on top of the element listed earlier.
+
+### Template
+The output JavaScript code should follow the following template:
+
+```javascript
+// @SVG_META: {"filename": "<svg-filename>"}
+
+// Select the SVG elements
+<code></code>
+
+// Create a timeline object
+<code></code>
+
+// Compute necessary variables. Comment each line of code with your reasoning
+<code></code>
+
+// Create the animation step by step. Comment each line of code with your reasoning
+<code></code>
+```
+
+### Animation API Documentation
+```javascript
 /**
  * This function adds a tween to the timeline to translates an SVG element.
  * @param {object{"GSAP_TIMELINE_OBJECT"}} timeline - The timeline object to add the translation tween to.
@@ -11,10 +53,10 @@
  * @example
  * // Translates the square element 25 pixels to the right and 25 pixels down over 1 second.
  * translate(tl, square, 1, 25, 25, 0);
- * 
+ *
  * // Translates the square element 25 pixels to the right and 25 pixels down over 1 second, starting at 2 seconds into the timeline. The easing function used is power1.out.
  * translate(tl, square, 1, 25, 25, 2, 'power1.out');
- * 
+ *
  * // Translates the square to move in a square path counterclockwise. Each side of the square path is 100px wide and takes 1 second.
  * translate(tl, square, 1, -100, 0, 0);
  * translate(tl, square, 1, 0, 100, 1);
@@ -41,7 +83,6 @@ function translate(timeline, element, duration, toX, toY, startTime, easing = 'n
     );
 }
 
-
 /**
  * This function adds a tween to the timeline to scale an SVG element.
  * @param {object{"GSAP_TIMELINE_OBJECT"}} timeline - The timeline object to add the translation tween to.
@@ -59,16 +100,16 @@ function translate(timeline, element, duration, toX, toY, startTime, easing = 'n
  * @example
  * // Scale the square element to double its size over 1 second from its center.
  * scale(tl, square, 1, 2, 2, 0);
- * 
+ *
  * // Scale the square element to double along x-axis and triple along y-axis over 2 second from its center, starting at 2 seconds into the timeline. The easing function used is power1.out.
  * scale(tl, square, 1, 2, 3, 2, '50%', '50%', null, null, 'power1.out');
- * 
+ *
  * // Scale the square element to be 4 times as large from its bottom right corner over 1 second.
  * scale(tl, square, 1, 4, 4, 0, '100%', '100%');
- * 
+ *
  * // Scale the square element to be 5 times as large along the x-axis and 2 times as large along the y-axis from (100px, 100px) in the SVG document over 2 second.
  * scale(tl, square, 2, 5, 2, 0, null, null, 100, 100);
- * 
+ *
  * // Scale the square element to 0 in both x-axis and y-axis over 1 second from its center. Then, scale it back up to 1 in both x-axis and y-axis over 1 second from the point (300, 200).
  * scale(tl, square, 1, 0, 0, 0);
  * scale(tl, square, 1, 1, 1, 1, null, null, 300, 200);
@@ -101,7 +142,6 @@ function scale(timeline, element, duration, scaleX, scaleY, startTime, elementTr
     );
 }
 
-
 /**
  * This function adds a tween to the timeline to rotate an SVG element.
  * @param {object{"GSAP_TIMELINE_OBJECT"}} timeline - The timeline object to add the translation tween to.
@@ -118,10 +158,10 @@ function scale(timeline, element, duration, scaleX, scaleY, startTime, elementTr
  * @example
  * // Rotate the square element by 45 degrees (clockwise) from its center over 1 second.
  * rotate(tl, square, 1, 45, 0);
- * 
+ *
  * // Rotate the square element by -90 degrees (counterclockwise) from its bottom right corner over 1 second, starting at 1.5 seconds into the timeline. The easing function used is power1.out.
  * rotate(tl, square, 1, -90, 1.5, '100%', '100%', null, null, 'power1.out');
- * 
+ *
  * // Rotate the square element by 135 degrees (clockwise) from (300, 300) in the SVG document over 2 second.
  * rotate(tl, square, 2, 135, 0, null, null, 300, 300);
  */
@@ -153,81 +193,6 @@ function rotate(timeline, element, duration, angle, startTime, elementTransformO
 }
 
 /**
- * This function returns the offset translation needed to align elementA to elementB.
- * Use this function if you want the same edges of the two elements to be aligned.
- * @param {object} elementA - The SVG element to be translated
- * @param {object} elementB - The target SVG element to be aligned to
- * @param {string="left", "horizontal-center", "right", "top", "vertical-center", "bottom"} alignTo - specifies how element A should be aligned to element B. "left" aligns the left edges of the two elements, "horizontal-center" aligns the horizontal center of the two elements, and "right" aligns the right edges of the two elements. "top" aligns the top edges of the two elements, "vertical-center" aligns the vertical centers of the two elements, and "bottom" aligns the bottom edges of the two elements.
- * @returns {object} - The offset translation {x: x-value, y: y-value} needed to align elementA to elementB
- * @example
- * // Align the square element to the left of the circle element.
- * const translation = computeTranslationForAlignTo(square, circle, 'left');
- * translate(tl, square, 1, translation.x, translation.y, 0);
- * 
- * // Move the ball so that the right edge of the ball aligns with the right edge of the board.
- * // Notice that here you should not use computeTranslationForAdjacentTo because same edges are being aligned.
- * const translation = computeTranslationForAlignTo(ball, board, 'right');
- * translate(tl, ball, 1, translation.x, translation.y, 0);
- */
-function computeTranslationForAlignTo(elementA, elementB, alignTo) {
-    let bbA = getAABB(elementA);
-    let bbB = getAABB(elementB);
-
-    switch (alignTo) {
-        case 'left':
-            return { x: bbB.left - bbA.left, y: 0 }
-
-        case 'horizontal-center':
-            return { x: (bbB.x + bbB.width / 2) - (bbA.x + bbA.width / 2), y: 0 }
-
-        case 'right':
-            return { x: bbB.right - bbA.right, y: 0 }
-
-        case 'top':
-            return { x: 0, y: bbB.top - bbA.top }
-
-        case 'vertical-center':
-            return { x: 0, y: (bbB.y + bbB.height / 2) - (bbA.y + bbA.height / 2) }
-
-        case 'bottom':
-            return { x: 0, y: bbB.bottom - bbA.bottom }
-    }
-}
-
-/**
- * This function returns the offset translation needed to place elementA adjacent (touching but not overlapping) to elementB.
- * Use this function if you want the opposite edges of the two elements to be aligned.
- * @param {object} elementA - The SVG element to be translated
- * @param {object} elementB - The target SVG element to be adjacent to
- * @param {string="left", "right", "top", "bottom"} adjacentTo - specifies how element A should be adjacent to element B. "left" places element A to the immediate left of element B, "right" places element A to the immediate right element B, "top" places element A right above element B, and "bottom" places element right below element B.
- * @returns {object} - The offset translation {x: x-value, y: y-value} needed to place elementA adjacent to elementB
- * @example
- * // Animate the ball to move to the top of the board so that the bottom of the ball touches the top of the board.
- * const translation = computeTranslationForAdjacentTo(ball, board, 'top');
- * translate(tl, ball, 1, translation.x, translation.y, 0);
- * 
- * // Move the ball so that the left edge of the ball aligns with the right edge of the board.
- * // Notice that here you should not use computeTranslationForAlignTo because different edges are being aligned.
- * const translation = computeTranslationForAdjacentTo(ball, board, 'right');
- * translate(tl, ball, 1, translation.x, translation.y, 0);
- */
-function computeTranslationForAdjacentTo(elementA, elementB, adjacentTo) {
-    let bbA = getAABB(elementA);
-    let bbB = getAABB(elementB);
-
-    switch (adjacentTo) {
-        case 'left':
-            return { x: bbB.left - bbA.right, y: 0 }
-        case 'right':
-            return { x: bbB.right - bbA.left, y: 0 }
-        case 'top':
-            return { x: 0, y: bbB.top - bbA.bottom }
-        case 'bottom':
-            return { x: 0, y: bbB.bottom - bbA.top }
-    }
-}
-
-/**
  * Creates a timeline object that stores and sequences all the animation tweens.
  * @returns {object} The created timeline.
  */
@@ -245,7 +210,6 @@ function getProperty(elementID, property) {
     return gsap.getProperty(elementID, property);
 }
 
-
 /**
  * This function immediately sets properties on an SVG element without animation. Use this function to initialize or instantly update element properties such as position, scale, rotation, opacity, etc. This is useful for setting up initial states before animating.
  * @param {object{"SVG_ELEMENT"}} element - The SVG element whose properties should be set.
@@ -259,7 +223,6 @@ function getProperty(elementID, property) {
 function setProperty(element, properties) {
     gsap.set(element, properties);
 }
-
 
 /**
  * This function returns the x and y coordinates of the center of an SVG element in pixels.
@@ -285,7 +248,7 @@ function getCenterPosition(element) {
  * @example
  * // Get the width of the square element.
  * const squareWidth = getSize(square).width;
- * 
+ *
  * // Get the radius of the circle element (don't use getProperty() to get the radius).
  * const circleRadius = getSize(circle).width / 2; // Can also use height instead of width.
  */
@@ -297,14 +260,5 @@ function getSize(element) {
     };
 }
 
-/**
- * This function returns the axis-aligned bounding box of an SVG element
- * @param {object{"SVG_ELEMENT"}} element - The SVG element
- * @returns {object} - The bounding box of the element
-*/
-function getAABB(element) {
-    let rect = element.getBoundingClientRect();
-    rect.y = rect.y + window.scrollY;
-    rect.top = rect.top + window.scrollY;
-    return rect;
-}
+
+```
