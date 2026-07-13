@@ -14,6 +14,7 @@ from PIL import Image
 from mover.converter.mover_converter import (
     DEFAULT_FPS,
     _get_animation_output_path,
+    _load_opencv,
     capture_frames_server_driven,
     convert_animation,
     create_video_from_frames,
@@ -402,20 +403,26 @@ class OutputNamingTest(unittest.TestCase):
             self.assertEqual(output_path.read_bytes(), b"fake-mp4")
             mock_load_opencv.assert_not_called()
 
+    def test_missing_opencv_recommends_media_extra(self) -> None:
+        with patch.dict("sys.modules", {"cv2": None}):
+            with self.assertRaisesRegex(RuntimeError, r"mover\[media\]"):
+                _load_opencv()
+
     @patch(
         "mover.converter.mover_converter.subprocess.run",
         side_effect=FileNotFoundError,
     )
-    @patch("mover.converter.mover_converter.importlib.import_module")
+    @patch(
+        "mover.converter.mover_converter._load_opencv",
+        side_effect=RuntimeError(
+            'Install FFmpeg or run: pip install "mover[media]"'
+        ),
+    )
     def test_missing_mp4_fallback_recommends_media_extra(
         self,
-        mock_import_module,
+        _mock_load_opencv,
         _mock_run,
     ) -> None:
-        mock_import_module.side_effect = ModuleNotFoundError(
-            "No module named 'cv2'",
-            name="cv2",
-        )
         frame = np.zeros((16, 16, 3), dtype=np.uint8)
 
         with tempfile.TemporaryDirectory() as temp_dir:
