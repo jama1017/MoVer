@@ -2,11 +2,11 @@ import io
 import json
 import asyncio
 import argparse
+import importlib
 import tempfile
 import shutil
 from typing import List
 from pathlib import Path
-import cv2
 import numpy as np
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -64,12 +64,55 @@ async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
         )
 
 
-def _validate_mp4(path: Path) -> None:
-    """Raise when ``path`` is not a nonempty, decodable MP4."""
-    if not path.is_file() or path.stat().st_size == 0:
-        raise RuntimeError(f"MP4 output is missing or empty: {path}")
+def _load_opencv():
+    """Load the optional OpenCV MP4 fallback with an actionable error."""
+    try:
+        return importlib.import_module("cv2")
+    except ModuleNotFoundError as error:
+        if error.name != "cv2":
+            raise
+        raise RuntimeError(
+            "MP4 output requires FFmpeg or the optional OpenCV fallback. "
+            'Install FFmpeg or run: pip install "mover[media]"'
+        ) from error
 
-    capture = cv2.VideoCapture(str(path))
+
+def _validate_nonempty_output(path: Path, output_format: str) -> None:
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(
+            f"{output_format.upper()} output is missing or empty: {path}"
+        )
+
+
+def _validate_ffmpeg_mp4(path: Path) -> None:
+    """Validate an FFmpeg-backed MP4 without requiring OpenCV."""
+    _validate_nonempty_output(path, "mp4")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-f",
+                "null",
+                "-",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError) as error:
+        raise RuntimeError(f"MP4 output could not be decoded: {path}") from error
+
+
+def _validate_mp4(path: Path, cv2_module=None) -> None:
+    """Raise when ``path`` is not a nonempty, decodable MP4."""
+    _validate_nonempty_output(path, "mp4")
+    cv2_module = cv2_module or _load_opencv()
+
+    capture = cv2_module.VideoCapture(str(path))
     try:
         if not capture.isOpened():
             raise RuntimeError(f"MP4 output could not be opened: {path}")
@@ -101,79 +144,108 @@ def create_video_from_frames(
     if output_format == "gif" and not ffmpeg_available:
         raise RuntimeError("GIF output requires a working FFmpeg installation")
 
-    height, width = frames[0].shape[:2]
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-
-    ## Always create MP4 first
     final_output_path = Path(output_path)
-    temp_mp4_path = final_output_path.with_suffix('.temp.mp4')
-    temp_mp4_path.unlink(missing_ok=True)
-    out = cv2.VideoWriter(str(temp_mp4_path), fourcc, fps, (width, height))
-
-    try:
-        try:
-            if not out.isOpened():
-                raise RuntimeError("OpenCV could not initialize the MP4 writer")
-            for frame in frames:
-                out.write(frame)
-        finally:
-            out.release()
-    except Exception:
-        temp_mp4_path.unlink(missing_ok=True)
-        raise
-
-    try:
-        _validate_mp4(temp_mp4_path)
-    except RuntimeError:
-        temp_mp4_path.unlink(missing_ok=True)
-        raise
-
-    if output_format == "gif":
-        temp_gif_path = final_output_path.with_suffix('.temp.gif')
-        temp_gif_path.unlink(missing_ok=True)
-        try:
-            subprocess.run([
-                'ffmpeg', '-y',
-                '-i', str(temp_mp4_path),
-                '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
-                str(temp_gif_path)
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            if not temp_gif_path.is_file() or temp_gif_path.stat().st_size == 0:
-                raise RuntimeError("FFmpeg produced an empty GIF")
-            temp_gif_path.replace(final_output_path)
-            return
-        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError):
-            temp_gif_path.unlink(missing_ok=True)
-            raise RuntimeError(
-                "GIF output requires FFmpeg with GIF palette support"
-            )
-        finally:
-            temp_mp4_path.unlink(missing_ok=True)
+    final_output_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized_frames = [
+        np.ascontiguousarray(frame, dtype=np.uint8) for frame in frames
+    ]
+    height, width = normalized_frames[0].shape[:2]
+    if any(
+        frame.ndim != 3
+        or frame.shape != normalized_frames[0].shape
+        or frame.shape[2] != 3
+        for frame in normalized_frames
+    ):
+        raise ValueError("All video frames must have the same HxWx3 shape")
 
     if ffmpeg_available:
-        ffmpeg_output_path = final_output_path.with_suffix('.ffmpeg.mp4')
+        ffmpeg_output_path = final_output_path.with_suffix(
+            ".ffmpeg.gif" if output_format == "gif" else ".ffmpeg.mp4"
+        )
         ffmpeg_output_path.unlink(missing_ok=True)
+        command = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-s",
+            f"{width}x{height}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+        ]
+        if output_format == "gif":
+            command.extend(
+                [
+                    "-vf",
+                    (
+                        f"fps={fps},split[s0][s1];"
+                        "[s0]palettegen=stats_mode=diff[p];"
+                        "[s1][p]paletteuse=dither=bayer:bayer_scale=5"
+                    ),
+                ]
+            )
+        else:
+            command.extend(
+                [
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-crf",
+                    "23",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                ]
+            )
+        command.append(str(ffmpeg_output_path))
+
         try:
-            subprocess.run([
-                'ffmpeg', '-y',
-                '-i', str(temp_mp4_path),
-                '-c:v', 'libx264',
-                '-preset', 'ultrafast',
-                '-crf', '23',
-                '-pix_fmt', 'yuv420p',
-                '-movflags', '+faststart',
-                str(ffmpeg_output_path)
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            _validate_mp4(ffmpeg_output_path)
+            subprocess.run(
+                command,
+                input=b"".join(frame.tobytes() for frame in normalized_frames),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
+            if output_format == "gif":
+                _validate_nonempty_output(ffmpeg_output_path, "gif")
+            else:
+                _validate_ffmpeg_mp4(ffmpeg_output_path)
             ffmpeg_output_path.replace(final_output_path)
-            temp_mp4_path.unlink(missing_ok=True)
             return
         except (subprocess.SubprocessError, FileNotFoundError, RuntimeError):
             ffmpeg_output_path.unlink(missing_ok=True)
+            if output_format == "gif":
+                raise RuntimeError(
+                    "GIF output requires FFmpeg with GIF palette support"
+                )
 
     print("Using OpenCV MP4 output because FFmpeg conversion is unavailable")
+    cv2 = _load_opencv()
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    temp_mp4_path = final_output_path.with_suffix(".temp.mp4")
+    temp_mp4_path.unlink(missing_ok=True)
+    out = cv2.VideoWriter(str(temp_mp4_path), fourcc, fps, (width, height))
+    try:
+        if not out.isOpened():
+            raise RuntimeError("OpenCV could not initialize the MP4 writer")
+        for frame in normalized_frames:
+            out.write(frame)
+    except Exception:
+        temp_mp4_path.unlink(missing_ok=True)
+        raise
+    finally:
+        out.release()
+
+    _validate_mp4(temp_mp4_path, cv2)
     temp_mp4_path.replace(final_output_path)
-    _validate_mp4(final_output_path)
 
 
 async def capture_frames_server_driven(
@@ -312,7 +384,7 @@ async def capture_frames_server_driven(
                     '-movflags', '+faststart',
                     str(ffmpeg_output_path)
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                _validate_mp4(ffmpeg_output_path)
+                _validate_ffmpeg_mp4(ffmpeg_output_path)
 
             ffmpeg_output_path.replace(final_output_path)
             print(f"Video saved to {output_path}")
@@ -336,7 +408,9 @@ async def capture_frames_server_driven(
                     else:
                         background.paste(img)
                     img = background
-                video_frames.append(cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
+                video_frames.append(
+                    np.asarray(img, dtype=np.uint8)[:, :, ::-1].copy()
+                )
             create_video_from_frames(video_frames, output_path, fps, output_format)
             print(f"Video saved to {output_path} (OpenCV fallback)")
 

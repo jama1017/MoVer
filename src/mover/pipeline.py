@@ -4,6 +4,23 @@ import subprocess
 import traceback
 from typing import Dict, Any
 from pathlib import Path
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="The MoVer generation pipeline",
+    modules={
+        "jacinle": "jacinle",
+        "jinja2": "Jinja2",
+        "lark": "lark",
+        "pyrealb": "pyrealb",
+        "torch": "torch",
+        "treelib": "treelib",
+        "yaml": "PyYAML",
+    },
+)
+
 import yaml
 from abc import ABC, abstractmethod
 from mover.synthesizers.animation_synthesizer import AnimationSynthesizer

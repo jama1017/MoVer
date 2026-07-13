@@ -1,5 +1,14 @@
 import math
 from decimal import Decimal
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="MoVer natural-language generation",
+    modules={"pyrealb": "pyrealb"},
+)
+
 from pyrealb import NO
 
 def word_category(word, vocab):

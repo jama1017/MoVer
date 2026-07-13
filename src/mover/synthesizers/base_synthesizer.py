@@ -1,7 +1,16 @@
-import jinja2
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Union
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="MoVer synthesis",
+    modules={"jinja2": "Jinja2"},
+)
+
+import jinja2
 from mover.synthesizers.llm_client import LLMClient
 from mover.synthesizers.utils import get_svg_code
 

@@ -1,2 +1,3 @@
-jacinle @ git+https://github.com/jama1017/Jacinle.git
-concepts @ git+https://github.com/jama1017/Concepts.git
+# Compatibility helper for tools that still consume requirements files.
+# Project and optional dependencies are defined in pyproject.toml.
+.[full]

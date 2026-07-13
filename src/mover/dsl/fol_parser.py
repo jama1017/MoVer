@@ -1,11 +1,19 @@
 import ast
 from typing import Optional
 
-from concepts.dsl.dsl_types import Variable, BOOL, INT64
-from concepts.dsl.dsl_functions import Function, FunctionType
-from concepts.dsl.expression import GeneralizedQuantificationExpression, ValueOutputExpression, FunctionApplicationExpression, AndExpression, OrExpression, get_expression_definition_context, get_types, ConstantExpression
-from concepts.dsl.parsers.fol_python_parser import FOLPythonParser
-from concepts.dsl.value import Value
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="The MoVer DSL parser",
+    modules={"jacinle": "jacinle", "lark": "lark", "torch": "torch"},
+)
+
+from mover._vendor.concepts.dsl.dsl_types import Variable, BOOL, INT64
+from mover._vendor.concepts.dsl.dsl_functions import Function, FunctionType
+from mover._vendor.concepts.dsl.expression import GeneralizedQuantificationExpression, ValueOutputExpression, FunctionApplicationExpression, AndExpression, OrExpression, get_expression_definition_context, get_types, ConstantExpression
+from mover._vendor.concepts.dsl.parsers.fol_python_parser import FOLPythonParser
+from mover._vendor.concepts.dsl.value import Value
 
 
 class FOLParser(FOLPythonParser):

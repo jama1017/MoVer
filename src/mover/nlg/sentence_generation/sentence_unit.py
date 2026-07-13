@@ -4,6 +4,15 @@ Core sentence unit generators extracted from original implementation.
 import math
 import numpy as np
 from typing import List, Dict, Any, Optional
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="MoVer natural-language generation",
+    modules={"pyrealb": "pyrealb"},
+)
+
 from pyrealb import NP, PP, V, N, A, D, Adv, P, CP, C, NO, VP, loadEn, addToLexicon
 from mover.nlg.sentence_generation.vocab import Vocab, LazyPyRealB
 from mover.nlg.data_classes import Motion, Object

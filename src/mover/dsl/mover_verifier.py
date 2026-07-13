@@ -1,6 +1,21 @@
 import json
 import argparse
 from pathlib import Path
+
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="The MoVer verifier",
+    modules={
+        "jacinle": "jacinle",
+        "jinja2": "Jinja2",
+        "lark": "lark",
+        "torch": "torch",
+        "treelib": "treelib",
+    },
+)
+
 from jinja2 import Template
 from mover.dsl.fol_domain import init_domain
 from mover.dsl.fol_parser import FOLParser

@@ -113,7 +113,9 @@ class TestProgramSynthesis:
                     total_num_failed += 1
                     
                     failed_message = f"Prompt #{i} failed: {test_case['chat_id_name']}\n\n"
-                    failed_message += f"Prompt: {test_case["animation_prompt"]}\n\n"
+                    failed_message += (
+                        f"Prompt: {test_case['animation_prompt']}\n\n"
+                    )
                     failed_message += f"Generated program:\n{program_str}\n"
                     
                     diff = unified_diff(ground_truth_program.splitlines(), program_string.splitlines(), lineterm='')
@@ -142,7 +144,9 @@ class TestProgramSynthesis:
                 total_num_error += 1
                 
                 output_message.append(f"Test case {i} error\n")
-                output_message.append(f"Prompt: {test_case["animation_prompt"]}")
+                output_message.append(
+                    f"Prompt: {test_case['animation_prompt']}"
+                )
                 output_message.append(str(traceback.format_exc()))
             
         summary = f"\n## Summary: {total_num_failed} / {total_num_test} failed, {total_num_error} / {total_num_test} errored\n"

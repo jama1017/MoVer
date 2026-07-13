@@ -1,3 +1,16 @@
+from mover._optional import require_modules
+
+require_modules(
+    extra="full",
+    feature="The MoVer DSL executor",
+    modules={
+        "jacinle": "jacinle",
+        "lark": "lark",
+        "torch": "torch",
+        "treelib": "treelib",
+    },
+)
+
 import torch
 import torch.nn.functional as F
 import math
@@ -11,15 +24,15 @@ from mover.dsl.fol_domain import transform_type_to_string, transform_string_to_t
 from mover.dsl.transform_types import iter_atomic_transform_types
 from typing import Any, Optional, Tuple, List, Dict
 
-import concepts.dsl.expression as E
+import mover._vendor.concepts.dsl.expression as E
 
-from concepts.dsl.dsl_types import BOOL, INT64, Variable
-from concepts.dsl.tensor_value import TensorValue
-from concepts.dsl.function_domain import FunctionDomain
-from concepts.dsl.parsers.parser_base import ParserBase
-from concepts.dsl.parsers.fol_python_parser import FOLProgramAssignmentExpression
-from concepts.dsl.executors.function_domain_executor import FunctionDomainExecutor
-from concepts.dsl.executors.tensor_value_executor import TensorValueExecutorBase, TensorValueExecutorReturnType
+from mover._vendor.concepts.dsl.dsl_types import BOOL, INT64, Variable
+from mover._vendor.concepts.dsl.tensor_value import TensorValue
+from mover._vendor.concepts.dsl.function_domain import FunctionDomain
+from mover._vendor.concepts.dsl.parsers.parser_base import ParserBase
+from mover._vendor.concepts.dsl.parsers.fol_python_parser import FOLProgramAssignmentExpression
+from mover._vendor.concepts.dsl.executors.function_domain_executor import FunctionDomainExecutor
+from mover._vendor.concepts.dsl.executors.tensor_value_executor import TensorValueExecutorBase, TensorValueExecutorReturnType
 
 
 class ExecutionTraceGetter(object):
