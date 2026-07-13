@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from mover.synthesizers.animation_synthesizer import AnimationSynthesizer
 from mover.synthesizers.mover_synthesizer import MoverSynthesizer
 from mover.dsl.mover_verifier import MoverVerifier
-from mover.converter.mover_converter import convert_animation
+from mover.converter.mover_converter import DEFAULT_FPS, convert_animation
 
 
 class BasePipeline(ABC):
@@ -223,7 +223,7 @@ class AnimationPipeline(BasePipeline):
                 int(server_config['port']),
                 server_config['create_video'],
                 output_format=server_config.get('output_format', 'mp4'),
-                video_fps=int(server_config.get('video_fps', 30)),
+                video_fps=int(server_config.get('video_fps', DEFAULT_FPS)),
             )
             
             ## Verify animation

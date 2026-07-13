@@ -287,6 +287,45 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
         await self._assert_reset_state(expected_large_state)
 
+    async def test_automatic_batch_schedule_includes_endpoint_and_static_frame(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                window.getAnimationInfo = () => ({
+                    animDuration: 1,
+                    fps: 2,
+                    steps: 2,
+                });
+                tl_to_use.seekCalls = [];
+            }"""
+        )
+        self.assertEqual(await self.page.evaluate("seekAndAppendToDom()"), 3)
+        self.assertEqual(
+            await self.page.evaluate("tl_to_use.seekCalls"),
+            [0, 0.5, 1],
+        )
+        self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
+        await self._assert_reset_state()
+
+        await self.page.evaluate(
+            """() => {
+                window.getAnimationInfo = () => ({
+                    animDuration: 0,
+                    fps: 60,
+                    steps: 0,
+                });
+                tl_to_use.seekCalls = [];
+            }"""
+        )
+        self.assertEqual(await self.page.evaluate("seekAndAppendToDom()"), 1)
+        self.assertEqual(
+            await self.page.evaluate("tl_to_use.seekCalls"),
+            [0],
+        )
+        self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
+        await self._assert_reset_state()
+
     async def test_invalid_options_and_seek_failure_do_not_mutate_page(self) -> None:
         for expression in (
             "seekAndAppendToDomUsingTimes([0], 0)",
@@ -343,21 +382,18 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(synchronized["targetValue"], 50, places=4)
         self.assertAlmostEqual(synchronized["targetTime"], 0.5, places=6)
 
-        await self.page.evaluate(
+        before_batch = await self.page.evaluate(
             """() => {
                 tl_to_use.reversed(true);
-                tl_to_use.paused(false);
+                tl_to_use.paused(true);
+                const state = {
+                    targetTime: tl_to_use.totalTime(),
+                    targetPaused: tl_to_use.paused(),
+                    targetReversed: tl_to_use.reversed(),
+                };
+                seekAndAppendToDomUsingTimes([0, 0.75], 128, false);
+                return state;
             }"""
-        )
-        before_batch = await self.page.evaluate(
-            """() => ({
-                targetTime: tl_to_use.totalTime(),
-                targetPaused: tl_to_use.paused(),
-                targetReversed: tl_to_use.reversed(),
-            })"""
-        )
-        await self.page.evaluate(
-            "seekAndAppendToDomUsingTimes([0, 0.75], 128, false)"
         )
         update_count_before_reset = await self.page.evaluate(
             "targetUpdateCount"
@@ -388,6 +424,49 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             before_batch["targetReversed"],
         )
         self.assertTrue(initial_state["targetPaused"])
+
+    async def test_rendered_data_runs_callback_derived_svg_updates(self) -> None:
+        await self.page.add_script_tag(path=str(GSAP_JS))
+        rendered = await self.page.evaluate(
+            """() => {
+                const shape = document.querySelector("#shape");
+                const proxy = { value: 0 };
+                let updateCount = 0;
+                window.tl_to_use = gsap.timeline({ paused: true });
+                tl_to_use.to(proxy, {
+                    value: 100,
+                    duration: 1,
+                    ease: "none",
+                    onUpdate: () => {
+                        updateCount++;
+                        shape.setAttribute(
+                            "data-progress",
+                            String(Math.round(proxy.value))
+                        );
+                    },
+                });
+                tl_to_use.totalProgress(1);
+
+                const data = createRenderedData(
+                    [shape],
+                    { spatial: {} },
+                    {
+                        spatial: [],
+                        visual: [],
+                        svgAttributes: ["data-progress"],
+                    },
+                    2
+                );
+                return {
+                    samples: data.shape["data-progress"],
+                    finalAttribute: shape.getAttribute("data-progress"),
+                    updateCount,
+                };
+            }"""
+        )
+        self.assertEqual(rendered["samples"], ["0", "50", "100"])
+        self.assertEqual(rendered["finalAttribute"], "0")
+        self.assertGreaterEqual(rendered["updateCount"], 4)
 
     async def test_real_browser_server_capture_and_grid_suppression(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

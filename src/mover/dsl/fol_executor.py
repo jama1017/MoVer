@@ -8,6 +8,7 @@ import numpy as np
 from treelib import Node, Tree
 from mover.dsl.utils import *
 from mover.dsl.fol_domain import transform_type_to_string, transform_string_to_type, TransformType, parse_motion_type_expr, parse_motion_type_string
+from mover.dsl.transform_types import iter_atomic_transform_types
 from typing import Any, Optional, Tuple, List, Dict
 
 import concepts.dsl.expression as E
@@ -315,10 +316,9 @@ class FOLExecutor(FunctionDomainExecutor):
                 type_intersection = motion_type_enum & transform_types_enum
                 if type_intersection != TransformType.NONE:
                     list_is_transform_in_dir = []
-                    ## Iterate over TransformType members manually for Python 3.10 compatibility (Flag.__iter__ requires 3.11+)
-                    for curr_type_intersection in TransformType:
-                        if curr_type_intersection not in type_intersection or curr_type_intersection == TransformType.NONE:
-                            continue
+                    for curr_type_intersection in iter_atomic_transform_types(
+                        type_intersection
+                    ):
                         motion_type = transform_string_to_type[curr_type_intersection.name.lower()]
                         transform_direction = element['{}_directions'.format(transform_type_to_string[motion_type])][i]
                         match motion_type:
@@ -408,10 +408,9 @@ class FOLExecutor(FunctionDomainExecutor):
                     transform_types_enum = parse_motion_type_string(element['transformTypes'][i])
                     type_intersection = motion_type_enum & transform_types_enum
                     if type_intersection != TransformType.NONE:
-                        ## Iterate over TransformType members manually for Python 3.10 compatibility (Flag.__iter__ requires 3.11+)
-                        for curr_type_intersection in TransformType:
-                            if curr_type_intersection not in type_intersection or curr_type_intersection == TransformType.NONE:
-                                continue
+                        for curr_type_intersection in iter_atomic_transform_types(
+                            type_intersection
+                        ):
                             motion_type = transform_string_to_type[curr_type_intersection.name.lower()]
                             match motion_type:
                                 case "T":
@@ -637,10 +636,7 @@ class FOLExecutor(FunctionDomainExecutor):
             tweens = element['tweens']
             
             for tween in tweens:
-                ## Iterate over TransformType members manually for Python 3.10 compatibility (Flag.__iter__ requires 3.11+)
-                for motion_type in TransformType:
-                    if motion_type not in motion_type_enum or motion_type == TransformType.NONE:
-                        continue
+                for motion_type in iter_atomic_transform_types(motion_type_enum):
                     if motion_type.name.lower() == tween['type']:
                         duration = tween['duration']
                         if np.isclose(duration, target_duration):

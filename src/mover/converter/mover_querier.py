@@ -1,5 +1,5 @@
 """
-MoVer Querier - Standalone script for querying element positions during GSAP animations.
+MoVer Querier - Experimental SVGPT utility for querying animation positions.
 
 This module provides functionality to find the time(s) when an element is at 
 specific positions during animation in HTML files containing GSAP animations.
@@ -10,12 +10,14 @@ import asyncio
 import argparse
 from typing import List
 from pathlib import Path
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 import uvicorn
+
+from mover.converter.mover_converter import _get_bound_port, _wait_for_server_start
 
 
 def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
@@ -59,30 +61,41 @@ async def run_get_position(html_file: str, target_centroids: List[dict], element
     
     # Start the server as a task
     server_task = asyncio.create_task(server.serve())
-    result = None
     
     try:
+        await _wait_for_server_start(server, server_task)
+        actual_port = _get_bound_port(server)
+
         # Initialize Playwright
         async with async_playwright() as p:
             browser = await p.chromium.launch()
-            page = await browser.new_page()
+            try:
+                page = await browser.new_page()
+                await page.goto(
+                    f"http://127.0.0.1:{actual_port}",
+                    wait_until="networkidle",
+                )
+                await page.evaluate("document.fonts.ready")
 
-            start_time = asyncio.get_event_loop().time()
-            await page.goto(f"http://127.0.0.1:{port}")
-            load_time = asyncio.get_event_loop().time() - start_time
-
-            # Execute JavaScript in the page context
-            centroids_js = json.dumps(target_centroids)
-            result = await page.evaluate(f"getPositionInTime({centroids_js}, '{element_id}', {tolerance})")
-
-            await browser.close()
+                # Playwright serializes values safely into the page context.
+                return await page.evaluate(
+                    """({targetCentroids, elementId, tolerance}) =>
+                        getPositionInTime(targetCentroids, elementId, tolerance)
+                    """,
+                    {
+                        "targetCentroids": target_centroids,
+                        "elementId": element_id,
+                        "tolerance": tolerance,
+                    },
+                )
+            finally:
+                await browser.close()
             
     finally:
         # Stop the server
         server.should_exit = True
-        await server.shutdown()
-        
-    return result
+        if not server_task.done():
+            await server_task
 
 
 def get_position_in_time(html_file: str, target_centroids: List[dict], element_id: str, tolerance: float = 0.1, port: int = 3014) -> List[List[dict]]:
@@ -106,7 +119,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Query element positions during GSAP animation in an HTML file.")
     parser.add_argument("html_file", type=str, help="Path to the HTML file containing the GSAP animation")
-    parser.add_argument("port", type=int, default=3014, help="Port to run the server on (default: 3014)")
+    parser.add_argument("port", type=int, help="Port to run the server on; use 0 for an available port")
     parser.add_argument("target_centroids", type=str, help="Target centroids as 'x1,y1;x2,y2;...'")
     parser.add_argument("element_id", type=str, help="ID of the element to track")
     parser.add_argument("tolerance", type=float, help="Tolerance for position matching in pixels")

@@ -21,6 +21,7 @@ import uvicorn
 VIDEO_OUTPUT_FORMATS = {"mp4", "gif"}
 FRAME_OUTPUT_FORMATS = {"png", "svg"}
 SUPPORTED_OUTPUT_FORMATS = VIDEO_OUTPUT_FORMATS | FRAME_OUTPUT_FORMATS
+DEFAULT_FPS = 60
 
 
 def _get_animation_output_path(
@@ -66,7 +67,7 @@ async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
 def create_video_from_frames(
     frames: List[np.ndarray],
     output_path: str,
-    fps: int = 30,
+    fps: int = DEFAULT_FPS,
     output_format: str = "mp4",
 ) -> None:
     """Create MP4/GIF output; GIF requires FFmpeg, MP4 can fall back to OpenCV."""
@@ -134,7 +135,7 @@ def create_video_from_frames(
 async def capture_frames_server_driven(
     page: Page,
     output_path: str,
-    fps: int = 30,
+    fps: int = DEFAULT_FPS,
     output_format: str = "mp4",
     in_memory: bool = False,
     hide_grid: bool = False,
@@ -401,7 +402,7 @@ def _get_bound_port(server: uvicorn.Server) -> int:
     return sockets[0].getsockname()[1]
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
@@ -498,7 +499,7 @@ async def capture_json_animation(actual_port: int, comparison_properties: dict |
         print("Easing is disabled for all tweens.")
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = 30, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create animation output.
     
@@ -513,7 +514,7 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
         output_format (str, optional): Output format (mp4, gif, png, or svg). Defaults to "mp4".
             PNG and SVG formats write per-frame files to an output directory.
             GIF output requires FFmpeg.
-        video_fps (int, optional): Frames per second for video, frame output, and JSON sampling. Defaults to 30.
+        video_fps (int, optional): Frames per second for video, frame output, and JSON sampling. Defaults to 60.
         print_console (bool, optional): Whether to print console and network messages. Defaults to False.
         comparison_properties (dict, optional): Property config for comparison recording.
             Dict with keys 'spatial', 'visual', 'svgAttributes' mapping to lists of
@@ -537,7 +538,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-keyframes", "-k", action="store_true", help="Save keyframes data to JSON")
     parser.add_argument("--save-for-comparison", "-c", action="store_true", help="Save rendered comparison data to JSON")
     parser.add_argument("--format", "-f", type=str, default="mp4", choices=["mp4", "gif", "png", "svg"], help="Output format for the animation: mp4, gif (requires FFmpeg), png, or svg frame sequence (default: mp4)")
-    parser.add_argument("--video-fps", type=int, default=30, help="Frames per second for video, frame output, and JSON sampling (default: 30)")
+    parser.add_argument("--video-fps", type=int, default=DEFAULT_FPS, help=f"Frames per second for video, frame output, and JSON sampling (default: {DEFAULT_FPS})")
     parser.add_argument("--print-console", "-pc", action="store_true", help="Print console and network messages from the browser (default: False)")
     parser.add_argument("--comparison-properties", type=str, default=None, help="JSON string of property config for comparison recording, e.g. '{\"spatial\": [\"transformedPts\", \"rotate\"], \"visual\": [\"opacity\"]}'")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory to write output files to (default: same directory as the HTML file)")

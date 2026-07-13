@@ -4,7 +4,7 @@
 - Think step by step.
 
 ### Instructions
-- You may use any functions provided in the API documentation, along with any other GSAP functions.
+- You may use functions provided in the API documentation, GSAP core, MotionPathPlugin, and EasePack. Do not use other GSAP plugins unless the selected HTML template explicitly loads them.
 - Prioritize using API functions over GSAP functions. Use GSAP functions only when the API functions are not sufficient.
 - Avoid doing calculations yourself. Use the functions provided in the API documentation and/or GSAP to do the calculations whenever possible.
 - Always use `document.querySelector()` to select SVG elements.
@@ -48,7 +48,7 @@ The output JavaScript code should follow the following template:
  * @param {number} toX - The amount of pixels to translate the element along the x-axis from its current position. This value is a relative offset from the element's current x value.
  * @param {number} toY - The amount of pixels to translate the element along the y-axis from its current position. This value is a relative offset from the element's current y value.
  * @param {number} startTime - The absolute time in the global timeline at which the tween should start.
- * @param {string{"GSAP_EASING_FUNCTIONS"}} [easing='none'] - The GSAP easing function to use for the tween. The default value is linear easing. The core easing functions are: "power1", "power2", "power3", "power4", "back", "bounce", "circ", "elastic", "expo", "sine", and "steps". Each function should be appended with ".in", ".out", or ".inOut" to specify how the rate of change should change over time. ".in" means a slow start and speeds up later. ".out" means a fast start and slows down at the end. ".inOut" means both a slow start and a slow ending. For example, "power2.in" specifies a quadratic easing in. Besides these core easing functions, there are also special easing functions such as "rough", "slow", and "expoScale", and generator functions such CustomEase, CustomBounce, and CustomWiggle.
+ * @param {string{"GSAP_EASING_FUNCTIONS"}} [easing='none'] - The GSAP easing function to use for the tween. The default value is linear easing. The core easing functions are: "power1", "power2", "power3", "power4", "back", "bounce", "circ", "elastic", "expo", "sine", and "steps". Each function should be appended with ".in", ".out", or ".inOut" to specify how the rate of change should change over time. ".in" means a slow start and speeds up later. ".out" means a fast start and slows down at the end. ".inOut" means both a slow start and a slow ending. For example, "power2.in" specifies a quadratic easing in. The bundled EasePack also provides the special easing functions "rough", "slow", and "expoScale". Do not use other GSAP easing plugins unless the selected HTML template explicitly loads them.
  * @returns {void} - This function does not return anything.
  * @example
  * // Translates the square element 25 pixels to the right and 25 pixels down over 1 second.

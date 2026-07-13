@@ -1,4 +1,5 @@
 import io
+import inspect
 import subprocess
 import tempfile
 import unittest
@@ -9,10 +10,13 @@ import numpy as np
 from PIL import Image
 
 from mover.converter.mover_converter import (
+    DEFAULT_FPS,
     _get_animation_output_path,
     capture_frames_server_driven,
+    convert_animation,
     create_video_from_frames,
     parse_args,
+    run_conversion,
 )
 
 
@@ -195,6 +199,21 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
 
 
 class OutputNamingTest(unittest.TestCase):
+    def test_public_default_fps_remains_60(self) -> None:
+        self.assertEqual(DEFAULT_FPS, 60)
+        for function, parameter_name in (
+            (create_video_from_frames, "fps"),
+            (capture_frames_server_driven, "fps"),
+            (run_conversion, "video_fps"),
+            (convert_animation, "video_fps"),
+        ):
+            self.assertEqual(
+                inspect.signature(function).parameters[parameter_name].default,
+                DEFAULT_FPS,
+            )
+        with patch("sys.argv", ["mover-converter", "example.html", "0"]):
+            self.assertEqual(parse_args().video_fps, DEFAULT_FPS)
+
     def test_video_names_remain_legacy_compatible(self) -> None:
         self.assertEqual(
             _get_animation_output_path("/tmp/output", "example", "mp4", 60),

@@ -2,7 +2,8 @@ from concepts.dsl.dsl_types import ValueType, ConstantType, BOOL, FLOAT32, Vecto
 from concepts.dsl.dsl_functions import Function, FunctionTyping
 from concepts.dsl.function_domain import FunctionDomain
 import ast
-from enum import IntFlag
+
+from mover.dsl.transform_types import TransformType
 
 def init_domain():
     domain = FunctionDomain()
@@ -123,16 +124,6 @@ transform_string_to_type = {
     "scale": "S",
     "rotate": "R",
 }
-
-
-class TransformType(IntFlag):
-    NONE = 0
-    
-    TRANSLATE = 1 << 0
-    ROTATE =    1 << 1
-    SCALE =     1 << 2
-    
-    ANY = TRANSLATE | ROTATE | SCALE
 
 
 transform_string_to_enum = {

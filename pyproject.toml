@@ -80,5 +80,4 @@ dev = [
 [project.optional-dependencies]
 local = [
     "ollama-python",
-    "vllm",
 ]

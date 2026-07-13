@@ -4,7 +4,7 @@
 - Think step by step.
 
 ### Instructions
-- You may use any functions provided in the API documentation, along with any other GSAP functions.
+- You may use functions provided in the API documentation, GSAP core, MotionPathPlugin, and EasePack. Do not use other GSAP plugins unless the selected HTML template explicitly loads them.
 - Prioritize using API functions over GSAP functions. Use GSAP functions only when the API functions are not sufficient.
 - Avoid doing calculations yourself. Use the functions provided in the API documentation and/or GSAP to do the calculations whenever possible.
 - Always use `document.querySelector()` to select SVG elements.

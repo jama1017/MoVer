@@ -243,12 +243,10 @@ function uniquifySvgResourceIds(svg, prefix) {
 }
 
 function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
-    let info = getAnimationInfo();
-    let times = []
-    for (let i = 0; i < info.steps; i++) {
-        times.push(
-            info.animDuration * i / info.steps
-        );
+    const info = getAnimationInfo();
+    const times = [];
+    for (let i = 0; i <= info.steps; i++) {
+        times.push(getSeekTime(i, info.fps, info.animDuration));
     }
     return seekAndAppendToDomUsingTimes(times, frameSize, hideGrid)
 }
@@ -953,7 +951,7 @@ function createRenderedData(allElems, registry, propertyConfig = null, fps = 60)
 
     // Get comparison properties at each timestep
     for (let i = 0; i < steps + 1; i++) {
-        tl_to_use.seek(getSeekTime(i, sampleFps, animDuration)).pause()
+        seekToTime(getSeekTime(i, sampleFps, animDuration))
 
         for (let j = 0; j < allElems.length; j++) {
             let elem = allElems[j]
