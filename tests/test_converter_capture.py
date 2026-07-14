@@ -90,7 +90,7 @@ class FakePage:
 
     async def evaluate(self, expression: str, argument=None):
         self.evaluate_calls.append((expression, argument))
-        if expression == "fps => getAnimationInfo(fps)":
+        if "getAnimationInfo(fps)" in expression:
             return {"animDuration": 1.25, "steps": 1}
         if "XMLSerializer" in expression:
             return '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
@@ -159,6 +159,38 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(page.evaluate_calls, [])
             self.assertFalse(output_path.parent.exists())
+
+    async def test_invalid_capture_duration_is_rejected_before_page_work(self) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "missing" / "frames"
+            with self.assertRaisesRegex(ValueError, "greater than zero"):
+                await capture_frames_server_driven(
+                    page,
+                    str(output_path),
+                    output_format="png",
+                    in_memory=True,
+                    capture_duration=float("inf"),
+                )
+
+            self.assertEqual(page.evaluate_calls, [])
+            self.assertFalse(output_path.parent.exists())
+
+    async def test_capture_duration_is_forwarded_to_browser_preparation(self) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            await capture_frames_server_driven(
+                page,
+                str(Path(temp_dir) / "frames"),
+                fps=30,
+                output_format="png",
+                in_memory=True,
+                capture_duration=2.5,
+            )
+
+        self.assertEqual(page.evaluate_calls[0][1], [30, 2.5])
 
     async def test_disk_png_uses_element_screenshot_bytes(self) -> None:
         page = FakePage()
@@ -235,8 +267,40 @@ class OutputNamingTest(unittest.TestCase):
                 inspect.signature(function).parameters[parameter_name].default,
                 DEFAULT_FPS,
             )
+        for function in (
+            capture_frames_server_driven,
+            run_conversion,
+            convert_animation,
+        ):
+            self.assertIsNone(
+                inspect.signature(function)
+                .parameters["capture_duration"]
+                .default
+            )
         with patch("sys.argv", ["mover-converter", "example.html", "0"]):
             self.assertEqual(parse_args().video_fps, DEFAULT_FPS)
+            self.assertIsNone(parse_args().capture_duration)
+
+    def test_capture_duration_cli_option(self) -> None:
+        with patch(
+            "sys.argv",
+            [
+                "mover-converter",
+                "example.html",
+                "0",
+                "--capture-duration",
+                "2.5",
+            ],
+        ):
+            self.assertEqual(parse_args().capture_duration, 2.5)
+
+    def test_convert_rejects_invalid_capture_duration_before_server_start(self) -> None:
+        with self.assertRaisesRegex(ValueError, "greater than zero"):
+            convert_animation(
+                "unused.html",
+                port=0,
+                capture_duration=0,
+            )
 
     def test_video_names_remain_legacy_compatible(self) -> None:
         self.assertEqual(

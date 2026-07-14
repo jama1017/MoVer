@@ -19,7 +19,7 @@ SVGPT_QUERY_FIXTURE = """<!doctype html>
         const circle = document.getElementById("circle'quoted");
         const tl = gsap.timeline({ paused: true });
         tl.to(circle, { x: 100, duration: 0.01, ease: "none" });
-        const tl_to_use = tl;
+        let tl_to_use = tl;
     </script>
     <script src="./convert.js"></script>
 </body>
@@ -47,6 +47,33 @@ class MoverQuerierTest(unittest.TestCase):
         self.assertEqual(args.target_centroids, "125,25")
         self.assertEqual(args.element_id, "circle'quoted")
         self.assertEqual(args.tolerance, 0.1)
+        self.assertIsNone(args.capture_duration)
+
+    def test_capture_duration_cli_option(self) -> None:
+        with patch(
+            "sys.argv",
+            [
+                "mover-querier",
+                "animation.html",
+                "0",
+                "125,25",
+                "circle",
+                "0.1",
+                "--capture-duration",
+                "2.5",
+            ],
+        ):
+            self.assertEqual(parse_args().capture_duration, 2.5)
+
+    def test_invalid_capture_duration_fails_before_server_start(self) -> None:
+        with self.assertRaisesRegex(ValueError, "greater than zero"):
+            get_position_in_time(
+                "unused.html",
+                [{"x": 0, "y": 0}],
+                "circle",
+                port=0,
+                capture_duration=0,
+            )
 
     def test_svgpt_position_query_uses_port_zero_and_quoted_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

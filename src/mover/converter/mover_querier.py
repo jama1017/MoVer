@@ -17,7 +17,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 import uvicorn
 
-from mover.converter.mover_converter import _get_bound_port, _wait_for_server_start
+from mover.converter.mover_converter import (
+    _get_bound_port,
+    _normalize_capture_duration,
+    _wait_for_server_start,
+)
 
 
 def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
@@ -45,13 +49,14 @@ def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
     return app
 
 
-async def run_get_position(html_file: str, target_centroids: List[dict], element_id: str, tolerance: float, port: int) -> List[List[dict]]:
+async def run_get_position(html_file: str, target_centroids: List[dict], element_id: str, tolerance: float, port: int, capture_duration: float | None = None) -> List[List[dict]]:
     """
     Run the time analysis.
     """
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
     base_name = html_path.stem
+    normalized_capture_duration = _normalize_capture_duration(capture_duration)
 
     app = setup_fastapi_app(html_file, html_dir, base_name)
 
@@ -76,6 +81,11 @@ async def run_get_position(html_file: str, target_centroids: List[dict], element
                     wait_until="networkidle",
                 )
                 await page.evaluate("document.fonts.ready")
+                await page.evaluate(
+                    "duration => initializeTimelineControl(duration)",
+                    normalized_capture_duration,
+                )
+                await page.evaluate("prepareTimelineForCapture()")
 
                 # Playwright serializes values safely into the page context.
                 return await page.evaluate(
@@ -98,7 +108,7 @@ async def run_get_position(html_file: str, target_centroids: List[dict], element
             await server_task
 
 
-def get_position_in_time(html_file: str, target_centroids: List[dict], element_id: str, tolerance: float = 0.1, port: int = 3014) -> List[List[dict]]:
+def get_position_in_time(html_file: str, target_centroids: List[dict], element_id: str, tolerance: float = 0.1, port: int = 3014, capture_duration: float | None = None) -> List[List[dict]]:
     """
     Find the time(s) when an element is at specific positions during animation.
 
@@ -108,11 +118,13 @@ def get_position_in_time(html_file: str, target_centroids: List[dict], element_i
         element_id (str): ID of the element to track
         tolerance (float, optional): Tolerance for position matching in pixels. Defaults to 0.1.
         port (int, optional): Port to run the server on. Defaults to 3014.
+        capture_duration (float, optional): Explicit finite duration in seconds.
+            Required when any captured GSAP animation repeats infinitely.
 
     Returns:
         List[List[dict]]: List of match lists, one for each centroid, with 'time' and 'error' keys
     """
-    return asyncio.run(run_get_position(html_file, target_centroids, element_id, tolerance, port))
+    return asyncio.run(run_get_position(html_file, target_centroids, element_id, tolerance, port, capture_duration))
 
 
 def parse_args() -> argparse.Namespace:
@@ -123,6 +135,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("target_centroids", type=str, help="Target centroids as 'x1,y1;x2,y2;...'")
     parser.add_argument("element_id", type=str, help="ID of the element to track")
     parser.add_argument("tolerance", type=float, help="Tolerance for position matching in pixels")
+    parser.add_argument("--capture-duration", type=float, default=None, help="Finite capture duration in seconds (required for infinite GSAP animations)")
     return parser.parse_args()
 
 
@@ -136,7 +149,14 @@ def main() -> None:
         x_str, y_str = centroid_str.split(',')
         target_centroids.append({'x': float(x_str), 'y': float(y_str)})
 
-    matches = get_position_in_time(args.html_file, target_centroids, args.element_id, args.tolerance, args.port)
+    matches = get_position_in_time(
+        args.html_file,
+        target_centroids,
+        args.element_id,
+        args.tolerance,
+        args.port,
+        args.capture_duration,
+    )
     print(json.dumps(matches, indent=2))
 
 
