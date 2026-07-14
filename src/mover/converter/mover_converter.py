@@ -3,6 +3,7 @@ import json
 import asyncio
 import argparse
 import importlib
+import math
 import tempfile
 import shutil
 from typing import List
@@ -22,6 +23,18 @@ VIDEO_OUTPUT_FORMATS = {"mp4", "gif"}
 FRAME_OUTPUT_FORMATS = {"png", "svg"}
 SUPPORTED_OUTPUT_FORMATS = VIDEO_OUTPUT_FORMATS | FRAME_OUTPUT_FORMATS
 DEFAULT_FPS = 60
+
+
+def _normalize_capture_duration(value: float | None) -> float | None:
+    """Return a finite positive capture duration or ``None``."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("capture_duration must be a finite number greater than zero")
+    duration = float(value)
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("capture_duration must be a finite number greater than zero")
+    return duration
 
 
 def _get_animation_output_path(
@@ -255,6 +268,7 @@ async def capture_frames_server_driven(
     output_format: str = "mp4",
     in_memory: bool = False,
     hide_grid: bool = False,
+    capture_duration: float | None = None,
 ) -> None | tuple[list[np.ndarray | io.StringIO], float]:
     """
     Server-driven frame capture: Python controls the timeline and screenshots.
@@ -272,9 +286,17 @@ async def capture_frames_server_driven(
         raise ValueError(f"Unsupported output format: {output_format}")
     if in_memory and output_format not in FRAME_OUTPUT_FORMATS:
         raise ValueError("in_memory=True is only supported for PNG and SVG output")
+    normalized_capture_duration = _normalize_capture_duration(capture_duration)
 
     ## Get animation info from the page using the same FPS used for seeking.
-    anim_info = await page.evaluate("fps => getAnimationInfo(fps)", fps)
+    anim_info = await page.evaluate(
+        """([fps, captureDuration]) => {
+            setMoverCaptureDuration(captureDuration);
+            prepareTimelineForCapture();
+            return getAnimationInfo(fps);
+        }""",
+        [fps, normalized_capture_duration],
+    )
     duration = float(anim_info["animDuration"])
     total_frames = anim_info["steps"]
     capture_frame_count = total_frames + 1
@@ -313,6 +335,7 @@ async def capture_frames_server_driven(
             await page.evaluate(
                 "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
             )
+            await page.evaluate("assertNoLateRootAnimations()")
 
             if output_format == "svg":
                 svg_markup = await page.evaluate("""() => {
@@ -531,11 +554,12 @@ def _get_bound_port(server: uvicorn.Server) -> int:
     return sockets[0].getsockname()[1]
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False, capture_duration: float | None = None) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
     base_name = html_path.stem
+    normalized_capture_duration = _normalize_capture_duration(capture_duration)
 
     ## Ensure output_dir exists if specified
     if output_dir:
@@ -573,6 +597,20 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
             load_time = asyncio.get_event_loop().time() - start_time
             print(f"{load_time:.2f} seconds")
 
+            timeline_selection = await page.evaluate(
+                "duration => initializeTimelineControl(duration)",
+                normalized_capture_duration,
+            )
+            timeline_info = await page.evaluate(
+                "prepareTimelineForCapture()"
+            )
+            if print_console:
+                print(
+                    "Controlled timeline: "
+                    f"{timeline_selection['source']} "
+                    f"({timeline_info['animDuration']}s)"
+                )
+
             await capture_json_animation(actual_port, comparison_properties, disable_easing, page,
                                          save_animated_properties, save_for_comparison, save_keyframes, video_fps)
 
@@ -596,6 +634,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
                     video_fps,
                     output_format,
                     hide_grid=hide_grid,
+                    capture_duration=normalized_capture_duration,
                 )
 
             await browser.close()
@@ -628,7 +667,7 @@ async def capture_json_animation(actual_port: int, comparison_properties: dict |
         print("Easing is disabled for all tweens.")
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False, capture_duration: float | None = None) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create animation output.
 
@@ -653,8 +692,10 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
             (registry names per element) to _properties.json. Defaults to False.
         hide_grid (bool, optional): Hide the SVG grid in raster captures without
             changing the interactive page styling. Defaults to False.
+        capture_duration (float, optional): Explicit finite duration in seconds.
+            Required when any captured GSAP animation repeats infinitely.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir, save_animated_properties, hide_grid))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir, save_animated_properties, hide_grid, capture_duration))
 
 
 def parse_args() -> argparse.Namespace:
@@ -673,6 +714,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=str, default=None, help="Directory to write output files to (default: same directory as the HTML file)")
     parser.add_argument("--save-animated-properties", "-ap", action="store_true", help="Extract and save animated property names (registry names per element) to _properties.json")
     parser.add_argument("--hide-grid", action="store_true", help="Hide the SVG grid in raster captures (default: False)")
+    parser.add_argument("--capture-duration", type=float, default=None, help="Finite capture duration in seconds (required for infinite GSAP animations)")
     return parser.parse_args()
 
 
@@ -680,7 +722,7 @@ def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
     comp_props = json.loads(args.comparison_properties) if args.comparison_properties else None
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir, args.save_animated_properties, args.hide_grid)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir, args.save_animated_properties, args.hide_grid, args.capture_duration)
 
 
 if __name__ == "__main__":

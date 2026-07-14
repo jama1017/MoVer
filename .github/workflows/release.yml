@@ -175,6 +175,7 @@ jobs:
             test_animation_prompt_assets \
             test_converter_capture \
             test_converter_dom \
+            test_converter_timeline \
             test_mover_querier \
             test_transform_types \
             -v

@@ -241,6 +241,7 @@ class AnimationPipeline(BasePipeline):
                 server_config['create_video'],
                 output_format=server_config.get('output_format', 'mp4'),
                 video_fps=int(server_config.get('video_fps', DEFAULT_FPS)),
+                capture_duration=server_config.get('capture_duration'),
             )
             
             ## Verify animation
