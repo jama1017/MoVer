@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -10,6 +11,12 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
 from mover.converter.mover_converter import capture_frames_server_driven
+from mover.converter.raster_capture import (
+    BatchCaptureError,
+    _capture_sequential,
+    _decode_rgba,
+    capture_png_frames_at_times,
+)
 
 
 CONVERT_JS = (
@@ -71,7 +78,9 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                             <stop stop-color="green"/>
                         </linearGradient>
                     </defs>
-                    <circle id="shape" cx="10" cy="10" r="3" fill='url("#paint")'/>
+                    <circle id="shape" cx="10" cy="10" r="3"
+                        fill='url("#paint")'
+                        data-external="url(https://example.com/a.svg#paint)"/>
                 </svg>
                 <br id="break" style="display: block">
                 <div id="existing" style="display: flex !important">Keep me</div>
@@ -84,6 +93,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                             this.seekCalls.push(time);
                             this.renderedTime = time;
                             this.currentTotalTime = time;
+                            document.querySelector("#shape").setAttribute(
+                                "cx",
+                                String(7 + (6 * time)),
+                            );
                             return this;
                         },
                         pause() {
@@ -107,6 +120,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                             }
                             this.currentTotalTime = value;
                             this.renderedTime = value;
+                            document.querySelector("#shape").setAttribute(
+                                "cx",
+                                String(7 + (6 * value)),
+                            );
                             return this;
                         },
                         totalDuration() { return 1; },
@@ -185,6 +202,8 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     paintId: svg.querySelector("linearGradient").id,
                     shapeId: svg.querySelector("circle").id,
                     fill: svg.querySelector("circle").getAttribute("fill"),
+                    external: svg.querySelector("circle")
+                        .getAttribute("data-external"),
                     styleText: svg.querySelector("style").textContent,
                 };
             })"""
@@ -210,6 +229,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("#mover_frame_0_paint", default_state[0]["fill"])
         self.assertIn("#mover_frame_1_paint", default_state[1]["fill"])
+        self.assertEqual(
+            [state["external"] for state in default_state],
+            ["url(https://example.com/a.svg#paint)"] * 2,
+        )
         self.assertIn(
             "#mover_frame_0_paint stop",
             default_state[0]["styleText"],
@@ -328,6 +351,324 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
         await self._assert_reset_state()
+
+    async def test_fast_capture_matches_rectangular_sequential_pixels(self) -> None:
+        await self.page.set_viewport_size({"width": 160, "height": 128})
+        await self.page.evaluate(
+            """() => {
+                const defs = document.querySelector("#source defs");
+                defs.insertAdjacentHTML(
+                    "beforeend",
+                    '<filter id="soft"><feGaussianBlur stdDeviation="0.2"/></filter>'
+                    + '<mask id="visible"><rect width="100%" height="100%" fill="white"/></mask>'
+                );
+                const shape = document.querySelector("#shape");
+                shape.setAttribute("filter", "url(#soft)");
+                shape.setAttribute("mask", "url(#visible)");
+                window._moverOriginalRaf = window.requestAnimationFrame;
+                window._moverRafCalls = 0;
+                window.requestAnimationFrame = callback => {
+                    window._moverRafCalls += 1;
+                    return window._moverOriginalRaf(callback);
+                };
+            }"""
+        )
+        expected_state = await self._snapshot_original_state()
+        times = [0.0, 0.25, 0.5, 0.5, 1.0]
+        try:
+            with patch(
+                "mover.converter.raster_capture._decode_rgba",
+                wraps=_decode_rgba,
+            ) as decode:
+                batched = await capture_png_frames_at_times(
+                    self.page,
+                    times,
+                    width=80,
+                    height=40,
+                    strategy="batched",
+                    hide_grid=True,
+                )
+            self.assertEqual(decode.call_count, 1)
+            self.assertEqual(
+                await self.page.evaluate("window._moverRafCalls"),
+                2,
+            )
+        finally:
+            await self.page.evaluate(
+                """() => {
+                    window.requestAnimationFrame = window._moverOriginalRaf;
+                    delete window._moverOriginalRaf;
+                    delete window._moverRafCalls;
+                }"""
+            )
+
+        sequential = await capture_png_frames_at_times(
+            self.page,
+            times,
+            width=80,
+            height=40,
+            strategy="sequential",
+            hide_grid=True,
+        )
+        self.assertEqual(self.page.viewport_size, {"width": 160, "height": 128})
+        self.assertEqual(len(batched), len(times))
+        for index, (fast_frame, sequential_frame) in enumerate(
+            zip(batched, sequential)
+        ):
+            self.assertEqual(fast_frame.shape, (40, 80, 4))
+            np.testing.assert_allclose(
+                fast_frame,
+                sequential_frame,
+                atol=1.5 / 255.0,
+                err_msg=f"frame {index}",
+            )
+        np.testing.assert_array_equal(batched[2], batched[3])
+        await self._assert_reset_state(expected_state)
+
+    async def test_fast_capture_chunks_without_cross_frame_state(self) -> None:
+        times = [0.0, 0.25, 0.5, 0.75, 1.0]
+        with patch(
+            "mover.converter.raster_capture._plan_batch_chunk_size",
+            return_value=2,
+        ), patch(
+            "mover.converter.raster_capture._decode_rgba",
+            wraps=_decode_rgba,
+        ) as decode:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                times,
+                width=80,
+                height=40,
+            )
+        self.assertEqual(len(frames), len(times))
+        self.assertEqual(decode.call_count, 3)
+        self.assertGreater(np.abs(frames[0] - frames[-1]).mean(), 0.001)
+        await self._assert_reset_state()
+
+    async def test_ineligible_nested_scene_reports_and_falls_back(self) -> None:
+        await self.page.evaluate(
+            """() => {
+                const section = document.createElement("section");
+                section.id = "scene-wrapper";
+                const source = document.querySelector("#source");
+                source.replaceWith(section);
+                section.appendChild(source);
+            }"""
+        )
+        expected_state = await self._snapshot_original_state()
+        with self.assertLogs(
+            "mover.converter.raster_capture",
+            level="WARNING",
+        ) as logs, patch(
+            "mover.converter.raster_capture._capture_sequential",
+            wraps=_capture_sequential,
+        ) as sequential_capture:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+            )
+        self.assertEqual(sequential_capture.await_count, 1)
+        self.assertIn("not a direct body child", "\n".join(logs.output))
+        self.assertEqual([frame.shape for frame in frames], [(40, 80, 4)] * 2)
+        await self._assert_reset_state(expected_state)
+
+    async def test_fast_support_rejects_unsafe_page_state(self) -> None:
+        results = await self.page.evaluate(
+            """() => {
+                const baseline = getBatchCaptureSupport();
+
+                document.body.style.setProperty(
+                    "background-image",
+                    "linear-gradient(red, blue)",
+                    "important"
+                );
+                const background = getBatchCaptureSupport();
+                document.body.style.removeProperty("background-image");
+
+                const source = document.querySelector("#source");
+                source.style.setProperty(
+                    "transform", "translateX(1px)", "important"
+                );
+                const transform = getBatchCaptureSupport();
+                source.style.removeProperty("transform");
+
+                source.setAttribute("viewBox", "0 0 20 20");
+                const letterboxing = getBatchCaptureSupport(80, 40);
+                source.removeAttribute("viewBox");
+
+                const text = document.createElementNS(
+                    "http://www.w3.org/2000/svg", "text"
+                );
+                text.textContent = "unsafe";
+                source.appendChild(text);
+                const textContent = getBatchCaptureSupport();
+                text.remove();
+
+                const originalGetChildren = tl_to_use.getChildren;
+                tl_to_use.getChildren = () => [{
+                    targets: () => [document.body],
+                }];
+                const outsideTarget = getBatchCaptureSupport();
+                tl_to_use.getChildren = originalGetChildren;
+                return {
+                    baseline,
+                    background,
+                    transform,
+                    letterboxing,
+                    textContent,
+                    outsideTarget,
+                };
+            }"""
+        )
+        self.assertTrue(results["baseline"]["supported"])
+        for name in (
+            "background",
+            "transform",
+            "letterboxing",
+            "textContent",
+            "outsideTarget",
+        ):
+            self.assertFalse(results[name]["supported"], name)
+            self.assertTrue(results[name]["reason"])
+
+    async def test_scale_one_capture_rejects_nonunit_dpr(self) -> None:
+        page = await self.browser.new_page(device_scale_factor=2)
+        try:
+            with self.assertRaisesRegex(ValueError, "devicePixelRatio == 1"):
+                await capture_png_frames_at_times(
+                    page,
+                    [0.0],
+                    width=80,
+                    height=40,
+                )
+        finally:
+            await page.close()
+
+    async def test_geometry_failure_resets_before_sequential_fallback(self) -> None:
+        with patch(
+            "mover.converter.raster_capture._validate_batch_geometry",
+            side_effect=BatchCaptureError("injected geometry failure"),
+        ), patch(
+            "mover.converter.raster_capture._capture_sequential",
+            wraps=_capture_sequential,
+        ) as sequential_capture:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+            )
+        self.assertEqual(sequential_capture.await_count, 1)
+        self.assertEqual(len(frames), 2)
+        await self._assert_reset_state()
+
+    async def test_batch_screenshot_failure_resets_before_fallback(self) -> None:
+        original_screenshot = self.page.screenshot
+        screenshot_calls = 0
+
+        async def fail_first_screenshot(**kwargs):
+            nonlocal screenshot_calls
+            screenshot_calls += 1
+            if screenshot_calls == 1:
+                raise PlaywrightError("injected batch screenshot failure")
+            return await original_screenshot(**kwargs)
+
+        with self.assertLogs(
+            "mover.converter.raster_capture",
+            level="WARNING",
+        ), patch.object(
+            self.page,
+            "screenshot",
+            side_effect=fail_first_screenshot,
+        ):
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+            )
+        self.assertEqual(len(frames), 2)
+        await self._assert_reset_state()
+
+    async def test_seek_failure_resets_and_propagates(self) -> None:
+        await self.page.evaluate(
+            """() => {
+                window._moverOriginalSeekToTime = window.seekToTime;
+                window.seekToTime = () => {
+                    throw new Error("injected seek failure");
+                };
+            }"""
+        )
+        try:
+            with patch(
+                "mover.converter.raster_capture._capture_sequential",
+                side_effect=AssertionError("seek failure must not fall back"),
+            ), self.assertRaisesRegex(PlaywrightError, "injected seek failure"):
+                await capture_png_frames_at_times(
+                    self.page,
+                    [0.0, 1.0],
+                    width=80,
+                    height=40,
+                )
+        finally:
+            await self.page.evaluate(
+                """() => {
+                    window.seekToTime = window._moverOriginalSeekToTime;
+                    delete window._moverOriginalSeekToTime;
+                }"""
+            )
+        await self._assert_reset_state()
+
+    async def test_viewbox_only_transparent_scene_keeps_exact_dimensions(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                document.documentElement.style.setProperty(
+                    "background", "transparent", "important"
+                );
+                document.body.style.setProperty(
+                    "background", "transparent", "important"
+                );
+                const source = document.querySelector("#source");
+                source.removeAttribute("width");
+                source.removeAttribute("height");
+                source.setAttribute("viewBox", "0 0 20 20");
+                source.style.setProperty(
+                    "background", "transparent", "important"
+                );
+            }"""
+        )
+        expected_state = await self._snapshot_original_state()
+        times = [0.0, 1.0]
+        sequential = await capture_png_frames_at_times(
+            self.page,
+            times,
+            width=160,
+            height=90,
+            strategy="sequential",
+            hide_grid=True,
+            omit_background=True,
+        )
+        batched = await capture_png_frames_at_times(
+            self.page,
+            times,
+            width=160,
+            height=90,
+            hide_grid=True,
+            omit_background=True,
+        )
+        for fast_frame, sequential_frame in zip(batched, sequential):
+            self.assertEqual(fast_frame.shape, (90, 160, 4))
+            np.testing.assert_allclose(
+                fast_frame,
+                sequential_frame,
+                atol=1.5 / 255.0,
+            )
+            self.assertEqual(fast_frame[0, 0, 3], 0.0)
+        await self._assert_reset_state(expected_state)
 
     async def test_scene_size_falls_back_to_viewbox_and_preserves_paint_fill(
         self,

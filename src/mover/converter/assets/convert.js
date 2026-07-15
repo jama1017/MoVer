@@ -530,7 +530,7 @@ function uniquifySvgResourceIds(svg, prefix) {
             const escapedId = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             rewritten = rewritten.replace(
                 new RegExp(
-                    `url\\(\\s*(['"]?)[^'")]*#${escapedId}\\1\\s*\\)`,
+                    `url\\(\\s*(['"]?)#${escapedId}\\1\\s*\\)`,
                     "g",
                 ),
                 (_match, quote) => `url(${quote}#${newId}${quote})`,
@@ -563,18 +563,225 @@ function uniquifySvgResourceIds(svg, prefix) {
     });
 }
 
-function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
+function normalizeBatchFrameOptions(
+    frameWidth,
+    frameHeightOrHideGrid,
+    hideGrid,
+    columns,
+) {
+    let frameHeight = frameHeightOrHideGrid;
+    let normalizedHideGrid = hideGrid;
+    // Preserve the historical square helper signature:
+    // seekAndAppendToDomUsingTimes(times, frameSize, hideGrid).
+    if (typeof frameHeightOrHideGrid === "boolean") {
+        frameHeight = frameWidth;
+        normalizedHideGrid = frameHeightOrHideGrid;
+    }
+    if (!Number.isInteger(frameWidth) || frameWidth <= 0) {
+        throw new TypeError("frameWidth must be a positive integer");
+    }
+    if (!Number.isInteger(frameHeight) || frameHeight <= 0) {
+        throw new TypeError("frameHeight must be a positive integer");
+    }
+    if (typeof normalizedHideGrid !== "boolean") {
+        throw new TypeError("hideGrid must be a boolean");
+    }
+    if (!Number.isInteger(columns) || columns <= 0) {
+        throw new TypeError("columns must be a positive integer");
+    }
+    return {
+        frameWidth,
+        frameHeight,
+        hideGrid: normalizedHideGrid,
+        columns,
+    };
+}
+
+function seekAndAppendToDom(
+    frameWidth = 128,
+    frameHeightOrHideGrid = frameWidth,
+    hideGrid = false,
+    columns = 1,
+) {
     const info = getAnimationInfo();
     const times = [];
     for (let i = 0; i <= info.steps; i++) {
         times.push(getSeekTime(i, info.fps, info.animDuration));
     }
-    return seekAndAppendToDomUsingTimes(times, frameSize, hideGrid)
+    return seekAndAppendToDomUsingTimes(
+        times,
+        frameWidth,
+        frameHeightOrHideGrid,
+        hideGrid,
+        columns,
+    );
 }
 
 const MOVER_BATCH_FRAME_ATTRIBUTE = "data-mover-batch-frame";
 let moverBatchCaptureState = null;
 let moverServerCaptureState = null;
+
+function setImportantStyles(element, styles) {
+    for (const [name, value] of Object.entries(styles)) {
+        element.style.setProperty(name, value, "important");
+    }
+}
+
+function getBatchPageBackgroundState() {
+    return JSON.stringify([
+        getComputedStyle(document.documentElement).backgroundColor,
+        getComputedStyle(document.documentElement).backgroundImage,
+        getComputedStyle(document.body).backgroundColor,
+        getComputedStyle(document.body).backgroundImage,
+    ]);
+}
+
+function getBatchCaptureSupport(
+    frameWidth = null,
+    frameHeight = null,
+    allowActiveBatch = false,
+) {
+    if (!document.documentElement || !document.body) {
+        return {supported: false, reason: "missing document root or body"};
+    }
+    const source = document.querySelector("svg");
+    if (!source) {
+        return {supported: false, reason: "missing SVG scene"};
+    }
+    if (source.parentElement !== document.body) {
+        return {
+            supported: false,
+            reason: "the first SVG is not a direct body child",
+        };
+    }
+    if (source.querySelector("text, foreignObject")) {
+        return {
+            supported: false,
+            reason: "the scene contains text or foreignObject content",
+        };
+    }
+    if (
+        Number.isInteger(frameWidth)
+        && Number.isInteger(frameHeight)
+        && source.viewBox
+        && source.viewBox.baseVal
+        && source.viewBox.baseVal.width > 0
+        && source.viewBox.baseVal.height > 0
+        && !/^none(?:\s|$)/i.test(
+            source.getAttribute("preserveAspectRatio") || "xMidYMid meet",
+        )
+    ) {
+        const sourceRatio = (
+            source.viewBox.baseVal.width / source.viewBox.baseVal.height
+        );
+        const requestedRatio = frameWidth / frameHeight;
+        const hasVisibleSibling = Array.from(document.body.children).some(
+            element => {
+                const style = getComputedStyle(element);
+                const canPaint = (
+                    element.textContent.trim() !== ""
+                    || element.matches(
+                        "img, svg, canvas, video, iframe, input, button",
+                    )
+                    || style.backgroundImage !== "none"
+                );
+                return (
+                    element !== source
+                    && element.tagName !== "SCRIPT"
+                    && style.display !== "none"
+                    && style.visibility !== "hidden"
+                    && canPaint
+                );
+            },
+        );
+        if (
+            Math.abs(sourceRatio - requestedRatio) > 1e-9
+            && hasVisibleSibling
+        ) {
+            return {
+                supported: false,
+                reason: (
+                    "aspect-ratio letterboxing has visible body siblings"
+                ),
+            };
+        }
+    }
+    if (typeof tl_to_use === "undefined" || !tl_to_use
+        || typeof tl_to_use.seek !== "function"
+        || typeof tl_to_use.pause !== "function") {
+        return {supported: false, reason: "animation timeline is not initialized"};
+    }
+    if (moverBatchCaptureState !== null && !allowActiveBatch) {
+        return {supported: false, reason: "another batch capture is active"};
+    }
+
+    const pageAnimations = (
+        typeof document.getAnimations === "function"
+            ? document.getAnimations({subtree: true})
+            : []
+    );
+    if (pageAnimations.some(animation => (
+        animation.playState === "running"
+        || animation.playState === "pending"
+    ))) {
+        return {
+            supported: false,
+            reason: "the page has a running browser animation",
+        };
+    }
+
+    const controlledAnimations = [
+        tl_to_use,
+        ...(typeof tl_to_use.getChildren === "function"
+            ? tl_to_use.getChildren(true, true, true)
+            : []),
+    ];
+    for (const animation of controlledAnimations) {
+        if (typeof animation.targets !== "function") {
+            continue;
+        }
+        for (const target of animation.targets()) {
+            if (target instanceof Element
+                && target !== source
+                && !source.contains(target)) {
+                return {
+                    supported: false,
+                    reason: "the GSAP timeline targets an element outside the scene SVG",
+                };
+            }
+        }
+    }
+
+    for (const [name, element] of [
+        ["html", document.documentElement],
+        ["body", document.body],
+    ]) {
+        const backgroundImage = getComputedStyle(element).backgroundImage;
+        if (backgroundImage && backgroundImage !== "none") {
+            return {
+                supported: false,
+                reason: `${name} has a non-uniform background image`,
+            };
+        }
+    }
+
+    const sceneStyle = getComputedStyle(source);
+    const unsupportedSceneStyle = [
+        ["transform", sceneStyle.transform, "none"],
+        ["filter", sceneStyle.filter, "none"],
+        ["mix-blend-mode", sceneStyle.mixBlendMode, "normal"],
+        ["opacity", sceneStyle.opacity, "1"],
+        ["clip-path", sceneStyle.clipPath, "none"],
+        ["mask-image", sceneStyle.maskImage, "none"],
+    ].find(([_name, value, supported]) => value && value !== supported);
+    if (unsupportedSceneStyle) {
+        return {
+            supported: false,
+            reason: `the root SVG uses ${unsupportedSceneStyle[0]}`,
+        };
+    }
+    return {supported: true, reason: null};
+}
 
 function beginServerDrivenCapture() {
     if (moverServerCaptureState !== null) {
@@ -622,40 +829,46 @@ function restoreServerDrivenCapture() {
     return true;
 }
 
-function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
+function seekAndAppendToDomUsingTimes(
+    seekTimes,
+    frameWidth = 128,
+    frameHeightOrHideGrid = frameWidth,
+    hideGrid = false,
+    columns = 1,
+    requireFastSupport = false,
+) {
     if (!Array.isArray(seekTimes)) {
         throw new TypeError("seekTimes must be an array");
     }
     if (!seekTimes.every(time => Number.isFinite(time))) {
         throw new TypeError("seekTimes must contain only finite numbers");
     }
-    if (!Number.isInteger(frameSize) || frameSize <= 0) {
-        throw new TypeError("frameSize must be a positive integer");
-    }
-    if (typeof hideGrid !== "boolean") {
-        throw new TypeError("hideGrid must be a boolean");
-    }
-    if (!document.documentElement || !document.body) {
-        throw new Error("Cannot append frames without a document root and body");
-    }
-    if (typeof tl_to_use === "undefined" || !tl_to_use
-        || typeof tl_to_use.seek !== "function" || typeof tl_to_use.pause !== "function") {
-        throw new Error("Animation timeline is not initialized");
-    }
-
-    const srcSvg = document.querySelector("body > svg");
-    if (!srcSvg) {
-        throw new Error("No direct child SVG element found");
-    }
-    if (moverBatchCaptureState !== null) {
-        throw new Error("Batch frames are already appended; call resetSeekAndAppend first");
+    const options = normalizeBatchFrameOptions(
+        frameWidth,
+        frameHeightOrHideGrid,
+        hideGrid,
+        columns,
+    );
+    if (requireFastSupport) {
+        const support = getBatchCaptureSupport(
+            options.frameWidth,
+            options.frameHeight,
+        );
+        if (!support.supported) {
+            throw new Error(`Unsupported batch capture: ${support.reason}`);
+        }
     }
     if (seekTimes.length === 0) {
         return 0;
     }
 
+    const srcSvg = document.querySelector("body > svg");
     const root = document.documentElement;
     const body = document.body;
+    const effectiveColumns = Math.min(options.columns, seekTimes.length);
+    const rows = Math.ceil(seekTimes.length / effectiveColumns);
+    const batchWidth = options.frameWidth * effectiveColumns;
+    const batchHeight = options.frameHeight * rows;
     const hiddenElements = Array.from(body.children)
         .filter(element => element.tagName !== "SCRIPT")
         .map(element => ({
@@ -669,39 +882,92 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
         bodyStyle: body.getAttribute("style"),
         hiddenElements,
         timelineState: captureGsapAnimationState(tl_to_use),
+        pageBackgroundState: getBatchPageBackgroundState(),
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        columns: effectiveColumns,
+        rows,
         frames: [],
     };
 
     try {
-        root.style.setProperty("margin", "0", "important");
-        root.style.setProperty("padding", "0", "important");
-        body.style.setProperty("margin", "0", "important");
-        body.style.setProperty("padding", "0", "important");
-        body.style.setProperty("display", "block", "important");
+        // Match explicit-size sequential capture while every synchronous seek
+        // still observes one unchanged page. Clones stay detached until all
+        // requested states have been sampled.
+        setImportantStyles(srcSvg, {
+            width: `${options.frameWidth}px`,
+            height: `${options.frameHeight}px`,
+            display: "block",
+            position: "fixed",
+            left: "0",
+            top: "0",
+            margin: "0",
+            "box-sizing": "border-box",
+            flex: "none",
+            "min-width": `${options.frameWidth}px`,
+            "max-width": `${options.frameWidth}px`,
+            "min-height": `${options.frameHeight}px`,
+            "max-height": `${options.frameHeight}px`,
+        });
 
         for (let i = 0; i < seekTimes.length; i++) {
             seekToTime(seekTimes[i]);
+            assertNoLateRootAnimations();
+            if (requireFastSupport) {
+                const frameSupport = getBatchCaptureSupport(
+                    options.frameWidth,
+                    options.frameHeight,
+                    true,
+                );
+                if (!frameSupport.supported) {
+                    throw new Error(
+                        `Unsupported batch capture: ${frameSupport.reason}`,
+                    );
+                }
+            }
+            if (
+                getBatchPageBackgroundState()
+                !== moverBatchCaptureState.pageBackgroundState
+            ) {
+                throw new Error(
+                    "Unsupported batch capture: page background changed",
+                );
+            }
 
             const wrapper = document.createElement("div");
             const svgCopy = srcSvg.cloneNode(true);
             uniquifySvgResourceIds(svgCopy, `mover_frame_${i}`);
 
             wrapper.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
-            wrapper.setAttribute("data-mover-frame-size", String(frameSize));
-            wrapper.style.setProperty("width", `${frameSize}px`, "important");
-            wrapper.style.setProperty("height", `${frameSize}px`, "important");
-            wrapper.style.setProperty("overflow", "hidden", "important");
-            wrapper.style.setProperty("display", "block", "important");
-            wrapper.style.setProperty("margin", "0", "important");
-            wrapper.style.setProperty("padding", "0", "important");
-            wrapper.style.setProperty("border", "0", "important");
-            wrapper.style.setProperty("box-sizing", "border-box", "important");
-
-            svgCopy.classList.remove("svg-width-fit-preview-target");
-            svgCopy.style.setProperty("width", `${frameSize}px`, "important");
-            svgCopy.style.setProperty("height", `${frameSize}px`, "important");
-            svgCopy.style.setProperty("display", "block", "important");
-            if (hideGrid) {
+            wrapper.setAttribute(
+                "data-mover-frame-size",
+                options.frameWidth === options.frameHeight
+                    ? String(options.frameWidth)
+                    : `${options.frameWidth}x${options.frameHeight}`,
+            );
+            setImportantStyles(wrapper, {
+                width: `${options.frameWidth}px`,
+                height: `${options.frameHeight}px`,
+                overflow: "hidden",
+                display: "block",
+                position: "relative",
+                margin: "0",
+                padding: "0",
+                border: "0",
+                "box-sizing": "border-box",
+                flex: "none",
+            });
+            setImportantStyles(svgCopy, {
+                width: `${options.frameWidth}px`,
+                height: `${options.frameHeight}px`,
+                display: "block",
+                position: "static",
+                left: "auto",
+                top: "auto",
+                margin: "0",
+                "box-sizing": "border-box",
+            });
+            if (options.hideGrid) {
                 svgCopy.style.setProperty(
                     "background-image",
                     "none",
@@ -711,17 +977,63 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
 
             wrapper.appendChild(svgCopy);
             moverBatchCaptureState.frames.push(wrapper);
-            body.appendChild(wrapper);
         }
         hiddenElements.forEach(({ element }) => {
             element.style.setProperty("display", "none", "important");
         });
+        for (const element of [root, body]) {
+            setImportantStyles(element, {
+                margin: "0",
+                padding: "0",
+                border: "0",
+                "box-sizing": "border-box",
+                width: `${batchWidth}px`,
+                height: `${batchHeight}px`,
+                "min-width": "0",
+                "min-height": "0",
+                "max-width": "none",
+                "max-height": "none",
+                overflow: "visible",
+            });
+        }
+        setImportantStyles(body, {
+            display: "grid",
+            "grid-template-columns": (
+                `repeat(${effectiveColumns}, ${options.frameWidth}px)`
+            ),
+            "grid-auto-rows": `${options.frameHeight}px`,
+            gap: "0",
+        });
+        moverBatchCaptureState.frames.forEach(frame => body.appendChild(frame));
+        window.scrollTo(0, 0);
     } catch (error) {
         resetSeekAndAppend();
         throw error;
     }
 
     return moverBatchCaptureState.frames.length;
+}
+
+function getBatchCaptureGeometry() {
+    const state = moverBatchCaptureState;
+    if (!state) {
+        throw new Error("Batch capture is not active");
+    }
+    const rectToObject = rect => ({
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+    });
+    return {
+        devicePixelRatio: window.devicePixelRatio,
+        columns: state.columns,
+        rows: state.rows,
+        container: rectToObject(state.body.getBoundingClientRect()),
+        frames: state.frames.map(frame => rectToObject(
+            frame.getBoundingClientRect(),
+        )),
+    };
 }
 
 function resetSeekAndAppend() {
@@ -754,10 +1066,14 @@ function resetSeekAndAppend() {
     } else {
         state.root.setAttribute("style", state.rootStyle);
     }
-    // Re-run deterministic callbacks so callback-derived SVG state matches
-    // the restored selected-timeline time.
-    restoreGsapAnimationState(state.timelineState, false);
-    assertNoLateRootAnimations();
+    try {
+        // Re-run deterministic callbacks so callback-derived SVG state matches
+        // the restored selected-timeline time.
+        restoreGsapAnimationState(state.timelineState, false);
+        assertNoLateRootAnimations();
+    } finally {
+        window.scrollTo(state.scrollX, state.scrollY);
+    }
 
     return true;
 }
