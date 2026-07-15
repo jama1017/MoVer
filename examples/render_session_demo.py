@@ -77,6 +77,7 @@ async def run(args: argparse.Namespace) -> None:
                 times,
                 width=args.width,
                 height=args.height,
+                hide_grid=args.hide_grid,
             )
             samples.append(time.perf_counter() - capture_started)
             if first_frames is None:
@@ -106,6 +107,7 @@ async def run(args: argparse.Namespace) -> None:
         print(f"Source: {html_path}")
         print(f"Animation duration: {duration:.3f}s")
         print(f"Capture route: {route}")
+        print(f"Grid hidden: {args.hide_grid}")
         if not support.get("supported"):
             print(f"Fallback reason: {support.get('reason')}")
         print(f"Session startup: {startup_s * 1000:.1f}ms")
@@ -142,6 +144,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=positive_int, default=128)
     parser.add_argument("--frames", type=positive_int, default=30)
     parser.add_argument("--runs", type=positive_int, default=5)
+    parser.add_argument(
+        "--hide-grid",
+        action="store_true",
+        help="Remove MoVer's CSS preview grid from captured frames",
+    )
     parser.add_argument(
         "--output",
         type=Path,
