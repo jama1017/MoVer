@@ -122,8 +122,9 @@ For MoVer:
 
 - Renderer-first dependency packaging is `0.2.0`.
 - A small fix immediately afterward is `0.2.1`.
-- Browser pooling and configurable timeline selection can ship together as
-  `0.3.0`, or in separate minor releases if independent review is safer.
+- Automatic capture of all existing GSAP root animations is `0.3.0`.
+- Batched capture and persistent rendering belong in later minor releases after
+  their independent correctness and performance gates pass.
 - Optional prereleases may use `0.3.0a1`, `0.3.0b1`, and `0.3.0rc1`.
 
 PyPI artifacts are immutable. Never overwrite a published version; make a new

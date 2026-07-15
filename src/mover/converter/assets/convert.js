@@ -1,4 +1,212 @@
 var svgRef = document.getElementsByTagName('svg')[0]
+let moverCaptureDuration = null;
+let moverControlPrepared = false;
+let moverPreparedAnimations = null;
+let moverPreparedControlDuration = null;
+
+function normalizeMoverCaptureDuration(value) {
+    if (value === null || value === undefined) {
+        return null;
+    }
+    const duration = Number(value);
+    if (!Number.isFinite(duration) || duration <= 0) {
+        throw new TypeError(
+            "capture duration must be a finite number greater than zero"
+        );
+    }
+    return duration;
+}
+
+function setMoverCaptureDuration(value) {
+    const duration = normalizeMoverCaptureDuration(value);
+    if (duration !== moverCaptureDuration) {
+        moverControlPrepared = false;
+        moverPreparedAnimations = null;
+        moverPreparedControlDuration = null;
+    }
+    moverCaptureDuration = duration;
+    return moverCaptureDuration;
+}
+
+function isControllableGsapTimeline(animation) {
+    const requiredMethods = [
+        "seek",
+        "pause",
+        "totalDuration",
+        "getChildren",
+        "getTweensOf",
+        "totalProgress",
+    ];
+    return Boolean(
+        animation
+        && requiredMethods.every(method => typeof animation[method] === "function")
+    );
+}
+
+function normalizeExportedRootChildren(timeline) {
+    const children = timeline
+        .getChildren(false, true, true)
+        .filter(child => {
+            if (isImmediateRootSetupTween(child)) {
+                timeline.remove(child);
+                return false;
+            }
+            return true;
+        });
+    children.forEach(child => {
+        const delay = (
+            typeof child.delay === "function"
+        ) ? child.delay() : 0;
+        child.startTime(delay);
+    });
+
+    return resumeControlledChildren(timeline);
+}
+
+function resumeControlledChildren(timeline) {
+    let resumedChildren = 0;
+    timeline.getChildren(true, true, true).forEach(child => {
+        if (typeof child.paused === "function" && child.paused()) {
+            child.paused(false);
+            resumedChildren++;
+        }
+    });
+    return resumedChildren;
+}
+
+function isGsapDelayedCall(animation) {
+    if (!animation || typeof animation.duration !== "function") {
+        return false;
+    }
+    const targets = (
+        typeof animation.targets === "function"
+    ) ? animation.targets() : [];
+    return (
+        animation.duration() === 0
+        && targets.length === 1
+        && typeof targets[0] === "function"
+        && animation.vars
+        && animation.vars.onComplete === targets[0]
+    );
+}
+
+function isImmediateRootSetupTween(animation) {
+    if (
+        !animation
+        || typeof animation.duration !== "function"
+        || typeof animation.delay !== "function"
+        || typeof animation.targets !== "function"
+    ) {
+        return false;
+    }
+    const targets = animation.targets();
+    return (
+        animation.duration() === 0
+        && animation.delay() === 0
+        && targets.length > 0
+        && targets.every(target => typeof target !== "function")
+    );
+}
+
+function getUnexpectedRootAnimations() {
+    if (
+        typeof tl_to_use === "undefined"
+        || !tl_to_use
+        || typeof gsap === "undefined"
+        || !gsap.globalTimeline
+    ) {
+        return [];
+    }
+    return gsap.globalTimeline
+        .getChildren(false, true, true)
+        .filter(animation => (
+            animation !== tl_to_use
+            && !isGsapDelayedCall(animation)
+        ));
+}
+
+function assertNoLateRootAnimations() {
+    const unexpected = getUnexpectedRootAnimations();
+    if (unexpected.length > 0) {
+        throw new Error(
+            "Unsupported post-snapshot GSAP animation detected: "
+            + "animations created during capture must be added to an "
+            + "already captured parent timeline"
+        );
+    }
+    return true;
+}
+
+function disableGsapDevTools() {
+    if (
+        typeof GSDevTools === "undefined"
+        || typeof GSDevTools.getByAnimation !== "function"
+    ) {
+        return 0;
+    }
+
+    const animations = new Set(
+        gsap.globalTimeline.getChildren(true, true, true)
+    );
+    if (typeof tl !== "undefined" && tl) {
+        animations.add(tl);
+    }
+    if (typeof tl_to_use !== "undefined" && tl_to_use) {
+        animations.add(tl_to_use);
+    }
+
+    const instances = new Set();
+    animations.forEach(animation => {
+        const instance = GSDevTools.getByAnimation(animation);
+        if (instance && typeof instance.kill === "function") {
+            instances.add(instance);
+        }
+    });
+    instances.forEach(instance => instance.kill());
+    return instances.size;
+}
+
+function initializeTimelineControl(captureDuration = null) {
+    setMoverCaptureDuration(captureDuration);
+    const disabledDevTools = disableGsapDevTools();
+    gsap.globalTimeline.pause();
+    const selected = gsap.exportRoot({
+        paused: true,
+        smoothChildTiming: false,
+    }, false);
+
+    if (!isControllableGsapTimeline(selected)) {
+        throw new Error(
+            "Exported GSAP root is not a Timeline with the "
+            + "required seek, duration, child, and tween methods"
+        );
+    }
+
+    const resumedChildren = normalizeExportedRootChildren(selected);
+    tl_to_use = selected;
+    tl_to_use.seek(0, false).pause();
+    moverControlPrepared = false;
+    moverPreparedAnimations = null;
+    moverPreparedControlDuration = null;
+    assertNoLateRootAnimations();
+
+    return {
+        source: "exported-root",
+        duration: tl_to_use.totalDuration(),
+        childCount: tl_to_use.getChildren(true, true, true).length,
+        resumedChildren,
+        disabledDevTools,
+    };
+}
+
+function seekControlledTimeline(time) {
+    resumeControlledChildren(tl_to_use);
+    tl_to_use.seek(time, false);
+    tl_to_use.pause();
+    assertNoLateRootAnimations();
+    assertPreparedTimelineStable();
+    return tl_to_use;
+}
 
 // Interprets the getter recipe from the property registry.
 function getSpatialValue(elem, propSpec) {
@@ -58,43 +266,124 @@ function getNonAnimatedElements(svgRef) {
     return res
 }
 
+function hasInfiniteAnimation() {
+    return [tl_to_use, ...tl_to_use.getChildren(true, true, true)]
+        .some(animation => (
+            typeof animation.repeat === "function"
+            && animation.repeat() === -1
+        ));
+}
 
-function getAnimationInfo(fps = 60) {
+
+function getAnimationInfo(fps = 60, captureDuration = moverCaptureDuration) {
     const sampleFps = Number(fps);
     if (!Number.isFinite(sampleFps) || sampleFps <= 0) {
         throw new Error(`Invalid fps: ${fps}`);
     }
 
-    const INFINITE_THRESHOLD = 1000000;
-    let animDuration = tl_to_use.totalDuration();
-    console.log("Timeline total duration:", animDuration);
+    const explicitDuration = normalizeMoverCaptureDuration(captureDuration);
+    const infinite = hasInfiniteAnimation();
+    if (infinite && explicitDuration === null) {
+        throw new Error(
+            "Infinite GSAP animation detected. Provide capture_duration "
+            + "in Python or --capture-duration on the command line."
+        );
+    }
 
-    if (!isFinite(animDuration) || animDuration > INFINITE_THRESHOLD) {
-        console.warn("Detected infinite timeline (duration > 1M seconds), calculating single cycle duration...");
-        const children = tl_to_use.getChildren();
-        let maxEndTime = 0;
-
-        children.forEach(child => {
-            const childStart = child.startTime();
-            const childDuration = child.duration();
-            const baseEnd = childStart + childDuration;
-
-            if (isFinite(baseEnd) && baseEnd > maxEndTime) {
-                maxEndTime = baseEnd;
-            }
-        });
-
-        if (maxEndTime > 0 && maxEndTime < INFINITE_THRESHOLD) {
-            animDuration = maxEndTime;
-            console.log("Calculated single cycle duration:", animDuration);
-        } else {
-            animDuration = 10;
-            console.warn("Could not calculate cycle duration, falling back to 10 seconds");
-        }
+    const inferredDuration = tl_to_use.totalDuration();
+    const animDuration = explicitDuration === null
+        ? inferredDuration
+        : explicitDuration;
+    if (!Number.isFinite(animDuration) || animDuration < 0) {
+        throw new Error(
+            "Could not infer a finite animation duration. "
+            + "Provide an explicit capture duration."
+        );
     }
 
     const steps = Math.ceil(animDuration * sampleFps);
     return { animDuration, fps: sampleFps, steps };
+}
+
+function getControlledAnimationSet() {
+    return new Set(tl_to_use.getChildren(true, true, true));
+}
+
+function animationSetsEqual(first, second) {
+    return (
+        first.size === second.size
+        && Array.from(first).every(animation => second.has(animation))
+    );
+}
+
+function assertPreparedTimelineStable() {
+    if (!moverControlPrepared || moverPreparedAnimations === null) {
+        return true;
+    }
+    if (
+        !animationSetsEqual(
+            moverPreparedAnimations,
+            getControlledAnimationSet()
+        )
+        || tl_to_use.totalDuration() !== moverPreparedControlDuration
+    ) {
+        throw new Error(
+            "Timeline structure changed after warm-up. "
+            + "Callback-created animations must be added exactly once "
+            + "to an already captured parent timeline."
+        );
+    }
+    return true;
+}
+
+function prepareTimelineForCapture() {
+    if (moverControlPrepared) {
+        assertNoLateRootAnimations();
+        assertPreparedTimelineStable();
+        return getAnimationInfo();
+    }
+
+    const originalState = captureGsapAnimationState(tl_to_use);
+    let preparedSuccessfully = false;
+    try {
+        assertNoLateRootAnimations();
+        const initialInfo = getAnimationInfo();
+        seekControlledTimeline(initialInfo.animDuration);
+        seekControlledTimeline(0);
+
+        const firstSettledAnimations = getControlledAnimationSet();
+        const settledInfo = getAnimationInfo();
+        seekControlledTimeline(settledInfo.animDuration);
+        seekControlledTimeline(0);
+
+        const secondSettledAnimations = getControlledAnimationSet();
+        const finalInfo = getAnimationInfo();
+        if (
+            !animationSetsEqual(
+                firstSettledAnimations,
+                secondSettledAnimations
+            )
+            || finalInfo.animDuration !== settledInfo.animDuration
+        ) {
+            throw new Error(
+                "Timeline structure did not stabilize during warm-up. "
+                + "Callback-created animations must be added exactly once "
+                + "to an already captured parent timeline."
+            );
+        }
+
+        moverPreparedAnimations = secondSettledAnimations;
+        moverPreparedControlDuration = tl_to_use.totalDuration();
+        moverControlPrepared = true;
+        preparedSuccessfully = true;
+        return finalInfo;
+    } finally {
+        restoreGsapAnimationState(originalState, false);
+        if (preparedSuccessfully) {
+            assertNoLateRootAnimations();
+            assertPreparedTimelineStable();
+        }
+    }
 }
 
 
@@ -157,8 +446,7 @@ function seekToTime(seekTime) {
         throw new TypeError("seekTime must be a finite number");
     }
 
-    tl_to_use.seek(seekTime, false);
-    tl_to_use.pause();
+    seekControlledTimeline(seekTime);
     return true;
 }
 
@@ -330,6 +618,7 @@ function restoreServerDrivenCapture() {
     // Re-run deterministic callbacks so callback-derived SVG state matches
     // the restored selected-timeline time.
     restoreGsapAnimationState(state.timelineState, false);
+    assertNoLateRootAnimations();
     return true;
 }
 
@@ -468,6 +757,7 @@ function resetSeekAndAppend() {
     // Re-run deterministic callbacks so callback-derived SVG state matches
     // the restored selected-timeline time.
     restoreGsapAnimationState(state.timelineState, false);
+    assertNoLateRootAnimations();
 
     return true;
 }
@@ -522,7 +812,7 @@ function convertToKeyframes(allElems) {
 
                 // For each keyframe time, seek timeline and record data
                 elementData[tween_type].keyframes.forEach(time => {
-                    tl_to_use.seek(time, false).pause()
+                    seekControlledTimeline(time)
 
                     // Record CTM for all tween types
                     let ctm = SVGMatrixToPy(elem.getCTM())
@@ -592,7 +882,7 @@ function getAllTransformationValues(animatedElems, fps = 60) {
     }
 
     for (let i = 0; i < steps + 1; i++) {
-        tl_to_use.seek(getSeekTime(i, sampleFps, animDuration), false).pause()
+        seekControlledTimeline(getSeekTime(i, sampleFps, animDuration))
 
         for (let j = 0; j < animatedElems.length; j++) {
             let elem = animatedElems[j]
@@ -923,7 +1213,7 @@ function getPositionInTime(targetCentroids, elementId, tolerance=0.1) {
 
     for (let i = 0; i <= steps; i++) {
         const time = getSeekTime(i, fps, animDuration);
-        tl_to_use.seek(time, false).pause();
+        seekControlledTimeline(time);
         const center = getCenter(elem);
 
         // Check against each target centroid
@@ -960,9 +1250,6 @@ function extractAnimatedProperties(svgRef, registry) {
         ...Object.keys(aliases),
     ]);
     const spatialNames = new Set(Object.keys(registry.spatial));
-
-    tl_to_use.totalProgress(1);
-    tl_to_use.totalProgress(0);
 
     const result = {};
     const svgChildren = svgRef.children;
@@ -1071,17 +1358,14 @@ function createRenderedData(allElems, registry, propertyConfig = null, fps = 60)
     res["info"]["propertyConfig"] = config;
 
     // Reset timeline to start
-    tl_to_use.seek(0, false).pause();
+    seekControlledTimeline(0);
 
     return res;
 }
 
 async function convert(port=8001, disableEasing=false, saveKeyframes=false, saveForComparison=false, registry=null, comparisonPropertyConfig=null, saveAnimatedProperties=false, fps=60){
     console.log("Converting...");
-
-    // This ensures dynamically added tweens are present before we gather animation data
-    tl_to_use.totalProgress(1);
-    tl_to_use.totalProgress(0);
+    prepareTimelineForCapture();
 
     let animatedElems = getAllAnimatedElements(svgRef);
     if (disableEasing) {

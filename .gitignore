@@ -26,6 +26,7 @@ tests/*
 !tests/test_prompt_generation.py
 !tests/test_converter_capture.py
 !tests/test_converter_dom.py
+!tests/test_converter_timeline.py
 !tests/test_animation_prompt_assets.py
 !tests/test_mover_querier.py
 !tests/test_transform_types.py
@@ -35,6 +36,7 @@ tests/*
 ## Outputs
 example_output/
 test_output/
+tools/render_gallery/
 
 ## Examples
 examples/*
