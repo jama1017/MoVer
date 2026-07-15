@@ -18,6 +18,15 @@ import subprocess
 from PIL import Image
 import uvicorn
 
+from mover.converter.raster_capture import (
+    RASTER_CAPTURE_STRATEGIES,
+    _capture_png_frames_at_times,
+    _capture_svg_png,
+    _normalize_capture_strategy,
+    _normalize_raster_dimensions,
+    capture_png_frames_at_times as capture_png_frames_at_times,
+)
+
 
 VIDEO_OUTPUT_FORMATS = {"mp4", "gif"}
 FRAME_OUTPUT_FORMATS = {"png", "svg"}
@@ -50,31 +59,6 @@ def _get_animation_output_path(
     if normalized_format in VIDEO_OUTPUT_FORMATS:
         return Path(output_dir) / f"{base_name}_animation.{normalized_format}"
     raise ValueError(f"Unsupported output format: {normalized_format}")
-
-
-async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
-    if not hide_grid:
-        return await svg_element.screenshot(type="png")
-
-    original_style = await svg_element.get_attribute("style")
-    await svg_element.evaluate(
-        """element =>
-            element.style.setProperty("background-image", "none", "important")
-        """
-    )
-    try:
-        return await svg_element.screenshot(type="png")
-    finally:
-        await svg_element.evaluate(
-            """(element, originalStyle) => {
-                if (originalStyle === null) {
-                    element.removeAttribute("style");
-                } else {
-                    element.setAttribute("style", originalStyle);
-                }
-            }""",
-            original_style,
-        )
 
 
 def _load_opencv():
@@ -269,6 +253,10 @@ async def capture_frames_server_driven(
     in_memory: bool = False,
     hide_grid: bool = False,
     capture_duration: float | None = None,
+    capture_strategy: str = "sequential",
+    width: int | None = None,
+    height: int | None = None,
+    omit_background: bool = False,
 ) -> None | tuple[list[np.ndarray | io.StringIO], float]:
     """
     Server-driven frame capture: Python controls the timeline and screenshots.
@@ -287,6 +275,21 @@ async def capture_frames_server_driven(
     if in_memory and output_format not in FRAME_OUTPUT_FORMATS:
         raise ValueError("in_memory=True is only supported for PNG and SVG output")
     normalized_capture_duration = _normalize_capture_duration(capture_duration)
+    normalized_strategy = _normalize_capture_strategy(capture_strategy)
+    dimensions = _normalize_raster_dimensions(width, height)
+    if not isinstance(omit_background, bool):
+        raise ValueError("omit_background must be a boolean")
+    if normalized_strategy == "batched" and dimensions is None:
+        raise ValueError("batched capture requires explicit width and height")
+    if output_format != "png" and (
+        normalized_strategy != "sequential"
+        or dimensions is not None
+        or omit_background
+    ):
+        raise ValueError(
+            "capture strategy, dimensions, and transparent background "
+            "are currently supported only for PNG output"
+        )
 
     ## Get animation info from the page using the same FPS used for seeking.
     anim_info = await page.evaluate(
@@ -325,6 +328,47 @@ async def capture_frames_server_driven(
             frames_dir.mkdir(parents=True, exist_ok=True)
             for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
                 existing_frame.unlink()
+
+    use_explicit_png_path = output_format == "png" and (
+        normalized_strategy == "batched"
+        or dimensions is not None
+        or omit_background
+    )
+    if use_explicit_png_path:
+        capture_times = [
+            min(frame_index / fps, duration)
+            for frame_index in range(capture_frame_count)
+        ]
+        if in_memory:
+            frames = await _capture_png_frames_at_times(
+                page,
+                capture_times,
+                width=width,
+                height=height,
+                strategy=normalized_strategy,
+                hide_grid=hide_grid,
+                omit_background=omit_background,
+            )
+            return frames, duration
+
+        assert frames_dir is not None
+
+        def write_frame(frame_index: int, frame: np.ndarray) -> None:
+            frame_path = frames_dir / f"frame_{frame_index:06d}.png"
+            Image.fromarray(frame).save(frame_path)
+
+        await _capture_png_frames_at_times(
+            page,
+            capture_times,
+            width=width,
+            height=height,
+            strategy=normalized_strategy,
+            hide_grid=hide_grid,
+            omit_background=omit_background,
+            frame_sink=write_frame,
+        )
+        print(f"PNG frames saved to {frames_dir}")
+        return
 
     capture_started = False
     try:
@@ -554,12 +598,45 @@ def _get_bound_port(server: uvicorn.Server) -> int:
     return sockets[0].getsockname()[1]
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False, capture_duration: float | None = None) -> None:
+async def run_conversion(
+    html_file: str,
+    port: int,
+    create_video: bool = False,
+    disable_easing: bool = False,
+    save_keyframes: bool = False,
+    save_for_comparison: bool = False,
+    output_format: str = "mp4",
+    video_fps: int = DEFAULT_FPS,
+    print_console: bool = False,
+    comparison_properties: dict | None = None,
+    output_dir: str | None = None,
+    save_animated_properties: bool = False,
+    hide_grid: bool = False,
+    capture_duration: float | None = None,
+    capture_strategy: str = "sequential",
+    width: int | None = None,
+    height: int | None = None,
+    omit_background: bool = False,
+) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
     base_name = html_path.stem
     normalized_capture_duration = _normalize_capture_duration(capture_duration)
+    normalized_strategy = _normalize_capture_strategy(capture_strategy)
+    dimensions = _normalize_raster_dimensions(width, height)
+    normalized_output_format = output_format.lower()
+    if normalized_strategy == "batched" and dimensions is None:
+        raise ValueError("batched capture requires explicit width and height")
+    if create_video and normalized_output_format != "png" and (
+        normalized_strategy != "sequential"
+        or dimensions is not None
+        or omit_background
+    ):
+        raise ValueError(
+            "capture strategy, dimensions, and transparent background "
+            "are currently supported only for PNG output"
+        )
 
     ## Ensure output_dir exists if specified
     if output_dir:
@@ -581,7 +658,14 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         # Initialize Playwright
         async with async_playwright() as p:
             browser = await p.chromium.launch()
-            page = await browser.new_page()
+            page_options: dict[str, object] = {}
+            if dimensions is not None:
+                page_options["viewport"] = {
+                    "width": max(1280, dimensions[0]),
+                    "height": max(720, dimensions[1]),
+                }
+                page_options["device_scale_factor"] = 1
+            page = await browser.new_page(**page_options)
 
             # Set up console logging and network error handlers
             page.on("console", lambda msg: handle_console_message(msg, print_console))
@@ -616,7 +700,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
 
             ## Server-driven animation output — no HTTP round-trips per frame.
             if create_video:
-                output_format = output_format.lower()
+                output_format = normalized_output_format
                 if output_format not in SUPPORTED_OUTPUT_FORMATS:
                     raise ValueError(f"Unsupported output format: {output_format}")
                 output_label = f"{output_format.upper()} frames" if output_format in FRAME_OUTPUT_FORMATS else output_format.upper()
@@ -635,6 +719,10 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
                     output_format,
                     hide_grid=hide_grid,
                     capture_duration=normalized_capture_duration,
+                    capture_strategy=normalized_strategy,
+                    width=width,
+                    height=height,
+                    omit_background=omit_background,
                 )
 
             await browser.close()
@@ -667,7 +755,26 @@ async def capture_json_animation(actual_port: int, comparison_properties: dict |
         print("Easing is disabled for all tweens.")
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: int = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False, capture_duration: float | None = None) -> None:
+def convert_animation(
+    html_file: str,
+    port: int = 3013,
+    create_video: bool = False,
+    disable_easing: bool = False,
+    save_keyframes: bool = False,
+    save_for_comparison: bool = False,
+    output_format: str = "mp4",
+    video_fps: int = DEFAULT_FPS,
+    print_console: bool = False,
+    comparison_properties: dict | None = None,
+    output_dir: str | None = None,
+    save_animated_properties: bool = False,
+    hide_grid: bool = False,
+    capture_duration: float | None = None,
+    capture_strategy: str = "sequential",
+    width: int | None = None,
+    height: int | None = None,
+    omit_background: bool = False,
+) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create animation output.
 
@@ -694,8 +801,37 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
             changing the interactive page styling. Defaults to False.
         capture_duration (float, optional): Explicit finite duration in seconds.
             Required when any captured GSAP animation repeats infinitely.
+        capture_strategy (str, optional): PNG raster strategy, either
+            ``"sequential"`` or ``"batched"``. Defaults to ``"sequential"``.
+        width (int, optional): Exact logical PNG width. Must be paired with
+            ``height``. Batched capture requires both dimensions.
+        height (int, optional): Exact logical PNG height. Must be paired with
+            ``width``.
+        omit_background (bool, optional): Allow transparent browser background
+            in PNG output while preserving authored SVG/page backgrounds.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir, save_animated_properties, hide_grid, capture_duration))
+    asyncio.run(
+        run_conversion(
+            html_file=html_file,
+            port=port,
+            create_video=create_video,
+            disable_easing=disable_easing,
+            save_keyframes=save_keyframes,
+            save_for_comparison=save_for_comparison,
+            output_format=output_format,
+            video_fps=video_fps,
+            print_console=print_console,
+            comparison_properties=comparison_properties,
+            output_dir=output_dir,
+            save_animated_properties=save_animated_properties,
+            hide_grid=hide_grid,
+            capture_duration=capture_duration,
+            capture_strategy=capture_strategy,
+            width=width,
+            height=height,
+            omit_background=omit_background,
+        )
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -715,6 +851,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-animated-properties", "-ap", action="store_true", help="Extract and save animated property names (registry names per element) to _properties.json")
     parser.add_argument("--hide-grid", action="store_true", help="Hide the SVG grid in raster captures (default: False)")
     parser.add_argument("--capture-duration", type=float, default=None, help="Finite capture duration in seconds (required for infinite GSAP animations)")
+    parser.add_argument("--capture-strategy", choices=sorted(RASTER_CAPTURE_STRATEGIES), default="sequential", help="PNG frame capture strategy (default: sequential)")
+    parser.add_argument("--width", type=int, default=None, help="Exact logical PNG width; requires --height")
+    parser.add_argument("--height", type=int, default=None, help="Exact logical PNG height; requires --width")
+    parser.add_argument("--omit-background", action="store_true", help="Allow transparent browser background in PNG output")
     return parser.parse_args()
 
 
@@ -722,7 +862,26 @@ def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
     comp_props = json.loads(args.comparison_properties) if args.comparison_properties else None
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir, args.save_animated_properties, args.hide_grid, args.capture_duration)
+    convert_animation(
+        html_file=args.html_file,
+        port=args.port,
+        create_video=args.create_video,
+        disable_easing=args.disable_easing,
+        save_keyframes=args.save_keyframes,
+        save_for_comparison=args.save_for_comparison,
+        output_format=args.format,
+        video_fps=args.video_fps,
+        print_console=args.print_console,
+        comparison_properties=comp_props,
+        output_dir=args.output_dir,
+        save_animated_properties=args.save_animated_properties,
+        hide_grid=args.hide_grid,
+        capture_duration=args.capture_duration,
+        capture_strategy=args.capture_strategy,
+        width=args.width,
+        height=args.height,
+        omit_background=args.omit_background,
+    )
 
 
 if __name__ == "__main__":

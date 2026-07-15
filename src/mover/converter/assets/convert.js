@@ -563,18 +563,125 @@ function uniquifySvgResourceIds(svg, prefix) {
     });
 }
 
-function seekAndAppendToDom(frameSize = 128, hideGrid = false) {
+function _normalizeBatchFrameOptions(
+    frameWidth,
+    frameHeightOrHideGrid,
+    hideGrid,
+    columns,
+) {
+    let frameHeight = frameHeightOrHideGrid;
+    let normalizedHideGrid = hideGrid;
+    // Preserve the old square helper signature:
+    // seekAndAppendToDomUsingTimes(times, frameSize, hideGrid).
+    if (typeof frameHeightOrHideGrid === "boolean") {
+        frameHeight = frameWidth;
+        normalizedHideGrid = frameHeightOrHideGrid;
+    }
+    if (!Number.isInteger(frameWidth) || frameWidth <= 0) {
+        throw new TypeError("frameWidth must be a positive integer");
+    }
+    if (!Number.isInteger(frameHeight) || frameHeight <= 0) {
+        throw new TypeError("frameHeight must be a positive integer");
+    }
+    if (typeof normalizedHideGrid !== "boolean") {
+        throw new TypeError("hideGrid must be a boolean");
+    }
+    if (!Number.isInteger(columns) || columns <= 0) {
+        throw new TypeError("columns must be a positive integer");
+    }
+    return {
+        frameWidth,
+        frameHeight,
+        hideGrid: normalizedHideGrid,
+        columns,
+    };
+}
+
+function seekAndAppendToDom(
+    frameWidth = 128,
+    frameHeightOrHideGrid = frameWidth,
+    hideGrid = false,
+    columns = 1,
+) {
     const info = getAnimationInfo();
     const times = [];
     for (let i = 0; i <= info.steps; i++) {
         times.push(getSeekTime(i, info.fps, info.animDuration));
     }
-    return seekAndAppendToDomUsingTimes(times, frameSize, hideGrid)
+    return seekAndAppendToDomUsingTimes(
+        times,
+        frameWidth,
+        frameHeightOrHideGrid,
+        hideGrid,
+        columns,
+    );
 }
 
 const MOVER_BATCH_FRAME_ATTRIBUTE = "data-mover-batch-frame";
+const MOVER_BATCH_CONTAINER_ATTRIBUTE = "data-mover-batch-container";
 let moverBatchCaptureState = null;
 let moverServerCaptureState = null;
+
+function _getBatchPageBackgroundState() {
+    return JSON.stringify([
+        getComputedStyle(document.documentElement).backgroundColor,
+        getComputedStyle(document.documentElement).backgroundImage,
+        getComputedStyle(document.body).backgroundColor,
+        getComputedStyle(document.body).backgroundImage,
+    ]);
+}
+
+function getBatchCaptureSupport() {
+    if (!document.documentElement || !document.body) {
+        return {
+            supported: false,
+            reason: "missing document root or body",
+        };
+    }
+    const srcSvg = document.querySelector("svg");
+    if (!srcSvg) {
+        return {supported: false, reason: "missing SVG"};
+    }
+    if (srcSvg.parentElement !== document.body) {
+        return {
+            supported: false,
+            reason: "the first SVG is not a direct body child",
+        };
+    }
+    for (const [name, element] of [
+        ["html", document.documentElement],
+        ["body", document.body],
+    ]) {
+        const backgroundImage = getComputedStyle(element).backgroundImage;
+        if (backgroundImage && backgroundImage !== "none") {
+            return {
+                supported: false,
+                reason: `${name} has a non-uniform background image`,
+            };
+        }
+        if (
+            typeof element.getAnimations === "function"
+            && element.getAnimations().length > 0
+        ) {
+            return {
+                supported: false,
+                reason: `${name} has an active browser animation`,
+            };
+        }
+        if (
+            typeof tl_to_use !== "undefined"
+            && tl_to_use
+            && typeof tl_to_use.getTweensOf === "function"
+            && tl_to_use.getTweensOf(element).length > 0
+        ) {
+            return {
+                supported: false,
+                reason: `${name} is targeted by the GSAP timeline`,
+            };
+        }
+    }
+    return {supported: true, reason: null};
+}
 
 function beginServerDrivenCapture() {
     if (moverServerCaptureState !== null) {
@@ -622,19 +729,25 @@ function restoreServerDrivenCapture() {
     return true;
 }
 
-function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = false) {
+async function seekAndAppendToDomUsingTimes(
+    seekTimes,
+    frameWidth = 128,
+    frameHeightOrHideGrid = frameWidth,
+    hideGrid = false,
+    columns = 1,
+) {
     if (!Array.isArray(seekTimes)) {
         throw new TypeError("seekTimes must be an array");
     }
     if (!seekTimes.every(time => Number.isFinite(time))) {
         throw new TypeError("seekTimes must contain only finite numbers");
     }
-    if (!Number.isInteger(frameSize) || frameSize <= 0) {
-        throw new TypeError("frameSize must be a positive integer");
-    }
-    if (typeof hideGrid !== "boolean") {
-        throw new TypeError("hideGrid must be a boolean");
-    }
+    const options = _normalizeBatchFrameOptions(
+        frameWidth,
+        frameHeightOrHideGrid,
+        hideGrid,
+        columns,
+    );
     if (!document.documentElement || !document.body) {
         throw new Error("Cannot append frames without a document root and body");
     }
@@ -643,10 +756,11 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
         throw new Error("Animation timeline is not initialized");
     }
 
-    const srcSvg = document.querySelector("body > svg");
-    if (!srcSvg) {
-        throw new Error("No direct child SVG element found");
+    const support = getBatchCaptureSupport();
+    if (!support.supported) {
+        throw new Error(`Unsupported batch capture: ${support.reason}`);
     }
+    const srcSvg = document.querySelector("svg");
     if (moverBatchCaptureState !== null) {
         throw new Error("Batch frames are already appended; call resetSeekAndAppend first");
     }
@@ -656,8 +770,13 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
 
     const root = document.documentElement;
     const body = document.body;
+    const effectiveColumns = Math.min(options.columns, seekTimes.length);
+    const rows = Math.ceil(seekTimes.length / effectiveColumns);
     const hiddenElements = Array.from(body.children)
-        .filter(element => element.tagName !== "SCRIPT")
+        .filter(element => (
+            element.tagName !== "SCRIPT"
+            && !element.hasAttribute(MOVER_BATCH_FRAME_ATTRIBUTE)
+        ))
         .map(element => ({
             element,
             style: element.getAttribute("style"),
@@ -667,41 +786,88 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
         rootStyle: root.getAttribute("style"),
         body,
         bodyStyle: body.getAttribute("style"),
+        bodyContainerAttribute: body.getAttribute(
+            MOVER_BATCH_CONTAINER_ATTRIBUTE
+        ),
         hiddenElements,
         timelineState: captureGsapAnimationState(tl_to_use),
+        pageBackgroundState: _getBatchPageBackgroundState(),
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        columns: effectiveColumns,
+        rows,
         frames: [],
     };
 
     try {
-        root.style.setProperty("margin", "0", "important");
-        root.style.setProperty("padding", "0", "important");
-        body.style.setProperty("margin", "0", "important");
-        body.style.setProperty("padding", "0", "important");
-        body.style.setProperty("display", "block", "important");
+        // Match explicit-size sequential capture while every seek and callback
+        // still observes the original page layout. Clones remain detached
+        // until all sampled states have been materialized.
+        srcSvg.style.setProperty(
+            "width",
+            `${options.frameWidth}px`,
+            "important",
+        );
+        srcSvg.style.setProperty(
+            "height",
+            `${options.frameHeight}px`,
+            "important",
+        );
+        srcSvg.style.setProperty("display", "block", "important");
+        srcSvg.style.setProperty("position", "fixed", "important");
+        srcSvg.style.setProperty("left", "0", "important");
+        srcSvg.style.setProperty("top", "0", "important");
+        srcSvg.style.setProperty("margin", "0", "important");
+        srcSvg.style.setProperty("box-sizing", "border-box", "important");
 
         for (let i = 0; i < seekTimes.length; i++) {
             seekToTime(seekTimes[i]);
+            await new Promise(resolve => requestAnimationFrame(
+                () => requestAnimationFrame(resolve)
+            ));
+            assertNoLateRootAnimations();
+            const frameSupport = getBatchCaptureSupport();
+            if (!frameSupport.supported) {
+                throw new Error(
+                    `Unsupported batch capture: ${frameSupport.reason}`
+                );
+            }
+            if (
+                _getBatchPageBackgroundState()
+                !== moverBatchCaptureState.pageBackgroundState
+            ) {
+                throw new Error(
+                    "Unsupported batch capture: page background changed"
+                );
+            }
 
-            const wrapper = document.createElement("div");
             const svgCopy = srcSvg.cloneNode(true);
             uniquifySvgResourceIds(svgCopy, `mover_frame_${i}`);
 
-            wrapper.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
-            wrapper.setAttribute("data-mover-frame-size", String(frameSize));
-            wrapper.style.setProperty("width", `${frameSize}px`, "important");
-            wrapper.style.setProperty("height", `${frameSize}px`, "important");
-            wrapper.style.setProperty("overflow", "hidden", "important");
-            wrapper.style.setProperty("display", "block", "important");
-            wrapper.style.setProperty("margin", "0", "important");
-            wrapper.style.setProperty("padding", "0", "important");
-            wrapper.style.setProperty("border", "0", "important");
-            wrapper.style.setProperty("box-sizing", "border-box", "important");
-
-            svgCopy.classList.remove("svg-width-fit-preview-target");
-            svgCopy.style.setProperty("width", `${frameSize}px`, "important");
-            svgCopy.style.setProperty("height", `${frameSize}px`, "important");
+            svgCopy.setAttribute(MOVER_BATCH_FRAME_ATTRIBUTE, "");
+            svgCopy.setAttribute(
+                "data-mover-frame-size",
+                options.frameWidth === options.frameHeight
+                    ? String(options.frameWidth)
+                    : `${options.frameWidth}x${options.frameHeight}`,
+            );
+            svgCopy.style.setProperty(
+                "width",
+                `${options.frameWidth}px`,
+                "important",
+            );
+            svgCopy.style.setProperty(
+                "height",
+                `${options.frameHeight}px`,
+                "important",
+            );
             svgCopy.style.setProperty("display", "block", "important");
-            if (hideGrid) {
+            svgCopy.style.setProperty("position", "static", "important");
+            svgCopy.style.setProperty("left", "auto", "important");
+            svgCopy.style.setProperty("top", "auto", "important");
+            svgCopy.style.setProperty("margin", "0", "important");
+            svgCopy.style.setProperty("box-sizing", "border-box", "important");
+            if (options.hideGrid) {
                 svgCopy.style.setProperty(
                     "background-image",
                     "none",
@@ -709,13 +875,49 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
                 );
             }
 
-            wrapper.appendChild(svgCopy);
-            moverBatchCaptureState.frames.push(wrapper);
-            body.appendChild(wrapper);
+            moverBatchCaptureState.frames.push(svgCopy);
         }
         hiddenElements.forEach(({ element }) => {
             element.style.setProperty("display", "none", "important");
         });
+        root.style.setProperty("margin", "0", "important");
+        root.style.setProperty("padding", "0", "important");
+        root.style.setProperty(
+            "width",
+            `${options.frameWidth * effectiveColumns}px`,
+            "important",
+        );
+        root.style.setProperty(
+            "height",
+            `${options.frameHeight * rows}px`,
+            "important",
+        );
+        body.style.setProperty("margin", "0", "important");
+        body.style.setProperty("padding", "0", "important");
+        body.style.setProperty("display", "grid", "important");
+        body.style.setProperty(
+            "grid-template-columns",
+            `repeat(${effectiveColumns}, ${options.frameWidth}px)`,
+            "important",
+        );
+        body.style.setProperty(
+            "grid-auto-rows",
+            `${options.frameHeight}px`,
+            "important",
+        );
+        body.style.setProperty("gap", "0", "important");
+        body.style.setProperty(
+            "width",
+            `${options.frameWidth * effectiveColumns}px`,
+            "important",
+        );
+        body.style.setProperty(
+            "height",
+            `${options.frameHeight * rows}px`,
+            "important",
+        );
+        body.setAttribute(MOVER_BATCH_CONTAINER_ATTRIBUTE, "");
+        moverBatchCaptureState.frames.forEach(frame => body.appendChild(frame));
     } catch (error) {
         resetSeekAndAppend();
         throw error;
@@ -724,13 +926,35 @@ function seekAndAppendToDomUsingTimes(seekTimes, frameSize = 128, hideGrid = fal
     return moverBatchCaptureState.frames.length;
 }
 
+function getBatchCaptureGeometry() {
+    const state = moverBatchCaptureState;
+    if (!state) {
+        throw new Error("Batch capture is not active");
+    }
+    const containerRect = state.body.getBoundingClientRect();
+    const rectToObject = rect => ({
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+    });
+    return {
+        devicePixelRatio: window.devicePixelRatio,
+        container: rectToObject(containerRect),
+        frames: state.frames.map(frame => rectToObject(
+            frame.getBoundingClientRect()
+        )),
+    };
+}
+
 function resetSeekAndAppend() {
     const state = moverBatchCaptureState;
     moverBatchCaptureState = null;
 
     if (!state) {
-        document.querySelectorAll(`body > [${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
+        document.querySelectorAll(`[${MOVER_BATCH_FRAME_ATTRIBUTE}]`)
             .forEach(frame => frame.remove());
+        document.body?.removeAttribute(MOVER_BATCH_CONTAINER_ATTRIBUTE);
         return false;
     }
 
@@ -748,6 +972,14 @@ function resetSeekAndAppend() {
     } else {
         state.body.setAttribute("style", state.bodyStyle);
     }
+    if (state.bodyContainerAttribute === null) {
+        state.body.removeAttribute(MOVER_BATCH_CONTAINER_ATTRIBUTE);
+    } else {
+        state.body.setAttribute(
+            MOVER_BATCH_CONTAINER_ATTRIBUTE,
+            state.bodyContainerAttribute,
+        );
+    }
     if (state.rootStyle === null) {
         state.root.style.cssText = "";
         state.root.removeAttribute("style");
@@ -756,8 +988,12 @@ function resetSeekAndAppend() {
     }
     // Re-run deterministic callbacks so callback-derived SVG state matches
     // the restored selected-timeline time.
-    restoreGsapAnimationState(state.timelineState, false);
-    assertNoLateRootAnimations();
+    try {
+        restoreGsapAnimationState(state.timelineState, false);
+        assertNoLateRootAnimations();
+    } finally {
+        window.scrollTo(state.scrollX, state.scrollY);
+    }
 
     return true;
 }

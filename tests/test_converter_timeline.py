@@ -502,10 +502,10 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await page.evaluate(
-            """() => {
+            """async () => {
                 initializeTimelineControl();
                 const info = getAnimationInfo(60);
-                const frameCount = seekAndAppendToDomUsingTimes([0]);
+                const frameCount = await seekAndAppendToDomUsingTimes([0]);
                 const renderedValue = zeroState.value;
                 const reset = resetSeekAndAppend();
                 return {info, frameCount, renderedValue, reset};

@@ -2,6 +2,7 @@ import io
 import importlib
 import inspect
 import json
+import math
 import subprocess
 import tempfile
 import unittest
@@ -16,10 +17,15 @@ from mover.converter.mover_converter import (
     _get_animation_output_path,
     _load_opencv,
     capture_frames_server_driven,
+    capture_png_frames_at_times,
     convert_animation,
     create_video_from_frames,
     parse_args,
     run_conversion,
+)
+from mover.converter.raster_capture import (
+    _plan_batch_chunk_size,
+    _plan_batch_layout,
 )
 
 
@@ -192,6 +198,72 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(page.evaluate_calls[0][1], [30, 2.5])
 
+    async def test_batched_capture_requires_paired_dimensions_before_page_work(
+        self,
+    ) -> None:
+        page = FakePage()
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires explicit width and height",
+        ):
+            await capture_frames_server_driven(
+                page,
+                "unused",
+                output_format="png",
+                capture_strategy="batched",
+            )
+        with self.assertRaisesRegex(
+            ValueError,
+            "provided together",
+        ):
+            await capture_frames_server_driven(
+                page,
+                "unused",
+                output_format="png",
+                width=320,
+            )
+        self.assertEqual(page.evaluate_calls, [])
+
+    async def test_invalid_explicit_capture_request_precedes_page_work(
+        self,
+    ) -> None:
+        page = FakePage()
+        for kwargs, message in (
+            ({"strategy": "unknown"}, "Unsupported capture strategy"),
+            ({"width": 0, "height": 10}, "positive integers"),
+            ({"seek_times": [float("nan")]}, "finite numbers"),
+        ):
+            seek_times = kwargs.pop("seek_times", [0.0])
+            with self.assertRaisesRegex(ValueError, message):
+                await capture_png_frames_at_times(
+                    page,
+                    seek_times,
+                    **kwargs,
+                )
+        self.assertEqual(page.evaluate_calls, [])
+
+    def test_batch_chunk_limit_is_dimension_and_pixel_bounded(self) -> None:
+        self.assertEqual(_plan_batch_chunk_size(128, 128), 100)
+        self.assertEqual(_plan_batch_chunk_size(1920, 1080), 3)
+        self.assertEqual(_plan_batch_chunk_size(20_000, 1), 0)
+        self.assertEqual(_plan_batch_chunk_size(8_000, 8_000), 0)
+        self.assertEqual(
+            _plan_batch_layout(320, 180, 1280, 720),
+            (16, 4),
+        )
+        capacity, columns = _plan_batch_layout(
+            1000,
+            1000,
+            7000,
+            2000,
+        )
+        self.assertEqual((capacity, columns), (8, 4))
+        rows = math.ceil(capacity / columns)
+        self.assertLessEqual(
+            columns * 1000 * rows * 1000,
+            8_000_000,
+        )
+
     async def test_disk_png_uses_element_screenshot_bytes(self) -> None:
         page = FakePage()
 
@@ -277,9 +349,31 @@ class OutputNamingTest(unittest.TestCase):
                 .parameters["capture_duration"]
                 .default
             )
+            self.assertEqual(
+                inspect.signature(function)
+                .parameters["capture_strategy"]
+                .default,
+                "sequential",
+            )
+            self.assertIsNone(
+                inspect.signature(function).parameters["width"].default
+            )
+            self.assertIsNone(
+                inspect.signature(function).parameters["height"].default
+            )
+            self.assertFalse(
+                inspect.signature(function)
+                .parameters["omit_background"]
+                .default
+            )
         with patch("sys.argv", ["mover-converter", "example.html", "0"]):
-            self.assertEqual(parse_args().video_fps, DEFAULT_FPS)
-            self.assertIsNone(parse_args().capture_duration)
+            args = parse_args()
+            self.assertEqual(args.video_fps, DEFAULT_FPS)
+            self.assertIsNone(args.capture_duration)
+            self.assertEqual(args.capture_strategy, "sequential")
+            self.assertIsNone(args.width)
+            self.assertIsNone(args.height)
+            self.assertFalse(args.omit_background)
 
     def test_capture_duration_cli_option(self) -> None:
         with patch(
@@ -301,6 +395,43 @@ class OutputNamingTest(unittest.TestCase):
                 port=0,
                 capture_duration=0,
             )
+
+    def test_convert_rejects_invalid_batched_request_before_server_start(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires explicit width and height",
+        ):
+            convert_animation(
+                "unused.html",
+                port=0,
+                create_video=True,
+                output_format="png",
+                capture_strategy="batched",
+            )
+
+    def test_batched_cli_options(self) -> None:
+        with patch(
+            "sys.argv",
+            [
+                "mover-converter",
+                "example.html",
+                "0",
+                "--capture-strategy",
+                "batched",
+                "--width",
+                "320",
+                "--height",
+                "180",
+                "--omit-background",
+            ],
+        ):
+            args = parse_args()
+        self.assertEqual(args.capture_strategy, "batched")
+        self.assertEqual(args.width, 320)
+        self.assertEqual(args.height, 180)
+        self.assertTrue(args.omit_background)
 
     def test_video_names_remain_legacy_compatible(self) -> None:
         self.assertEqual(
@@ -502,6 +633,54 @@ class OutputNamingTest(unittest.TestCase):
 
 
 class OptionalJsonOutputIntegrationTest(unittest.TestCase):
+    def test_opt_in_batched_png_matches_exact_sequential_dimensions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            html_path = root / "raster.html"
+            html_path.write_text(OPTIONAL_JSON_FIXTURE, encoding="utf-8")
+            outputs: dict[str, list[np.ndarray]] = {}
+            for strategy in ("sequential", "batched"):
+                output_dir = root / strategy
+                convert_animation(
+                    str(html_path),
+                    port=0,
+                    create_video=True,
+                    output_format="png",
+                    video_fps=10,
+                    output_dir=str(output_dir),
+                    hide_grid=True,
+                    capture_strategy=strategy,
+                    width=80,
+                    height=40,
+                )
+                frame_paths = sorted(
+                    (output_dir / "raster_animation_10_png").glob(
+                        "frame_*.png"
+                    )
+                )
+                self.assertEqual(len(frame_paths), 2)
+                outputs[strategy] = [
+                    np.asarray(
+                        Image.open(path).convert("RGBA"),
+                        dtype=np.float32,
+                    )
+                    / 255.0
+                    for path in frame_paths
+                ]
+                self.assertTrue(
+                    all(frame.shape == (40, 80, 4) for frame in outputs[strategy])
+                )
+
+            for sequential, batched in zip(
+                outputs["sequential"],
+                outputs["batched"],
+            ):
+                np.testing.assert_allclose(
+                    batched,
+                    sequential,
+                    atol=1.5 / 255.0,
+                )
+
     def test_all_documented_json_outputs_are_written(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

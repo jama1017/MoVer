@@ -3,13 +3,21 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
-from mover.converter.mover_converter import capture_frames_server_driven
+from mover.converter.mover_converter import (
+    capture_frames_server_driven,
+    capture_png_frames_at_times,
+)
+from mover.converter.raster_capture import (
+    _BatchGeometryError,
+    _capture_png_frames_sequential_at_times,
+)
 
 
 CONVERT_JS = (
@@ -57,6 +65,9 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 }
                 #shape {
                     opacity: 0.5;
+                }
+                body > svg #shape {
+                    stroke-width: 2px;
                 }
             </style>
             <body style="padding: 3px 4px !important; background: white">
@@ -155,7 +166,11 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             expected_state or self.initial_state,
         )
         self.assertEqual(
-            await self.page.locator("body > [data-mover-batch-frame]").count(),
+            await self.page.locator("[data-mover-batch-frame]").count(),
+            0,
+        )
+        self.assertEqual(
+            await self.page.locator("[data-mover-batch-container]").count(),
             0,
         )
 
@@ -169,10 +184,9 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
         default_state = await self.page.evaluate(
             """() => Array.from(
-                document.querySelectorAll("body > [data-mover-batch-frame]")
-            ).map(wrapper => {
-                const rect = wrapper.getBoundingClientRect();
-                const svg = wrapper.querySelector(":scope > svg");
+                document.querySelectorAll("[data-mover-batch-frame]")
+            ).map(svg => {
+                const rect = svg.getBoundingClientRect();
                 return {
                     rect: {
                         x: rect.x,
@@ -180,11 +194,14 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                         width: rect.width,
                         height: rect.height,
                     },
-                    svgCount: wrapper.querySelectorAll(":scope > svg").length,
+                    svgCount: svg.tagName === "svg" ? 1 : 0,
                     backgroundImage: getComputedStyle(svg).backgroundImage,
                     paintId: svg.querySelector("linearGradient").id,
                     shapeId: svg.querySelector("circle").id,
                     fill: svg.querySelector("circle").getAttribute("fill"),
+                    strokeWidth: getComputedStyle(
+                        svg.querySelector("circle")
+                    ).strokeWidth,
                     styleText: svg.querySelector("style").textContent,
                 };
             })"""
@@ -207,6 +224,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [state["shapeId"] for state in default_state],
             ["shape", "shape"],
+        )
+        self.assertEqual(
+            [state["strokeWidth"] for state in default_state],
+            ["2px", "2px"],
         )
         self.assertIn("#mover_frame_0_paint", default_state[0]["fill"])
         self.assertIn("#mover_frame_1_paint", default_state[1]["fill"])
@@ -249,10 +270,9 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(count, 2)
         large_state = await self.page.evaluate(
             """() => Array.from(
-                document.querySelectorAll("body > [data-mover-batch-frame]")
-            ).map(wrapper => {
-                const rect = wrapper.getBoundingClientRect();
-                const svg = wrapper.querySelector(":scope > svg");
+                document.querySelectorAll("[data-mover-batch-frame]")
+            ).map(svg => {
+                const rect = svg.getBoundingClientRect();
                 return {
                     rect: {
                         x: rect.x,
@@ -289,6 +309,508 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
         await self._assert_reset_state(expected_large_state)
+
+    async def test_rectangular_batched_capture_matches_sequential_times(
+        self,
+    ) -> None:
+        expected_viewport = {"width": 160, "height": 128}
+        await self.page.set_viewport_size(expected_viewport)
+        await self.page.evaluate(
+            """() => {
+                const source = document.querySelector("#source");
+                const shape = document.querySelector("#shape");
+                source.setAttribute("viewBox", "0 0 20 20");
+                source.setAttribute("preserveAspectRatio", "xMidYMid meet");
+                const originalSeek = tl_to_use.seek.bind(tl_to_use);
+                tl_to_use.seek = time => {
+                    originalSeek(time);
+                    shape.setAttribute("cx", String(6 + 8 * time));
+                    return tl_to_use;
+                };
+            }"""
+        )
+        expected_state = await self._snapshot_original_state()
+        times = [0.0, 0.25, 0.5, 0.5, 1.0]
+        sequential = await capture_png_frames_at_times(
+            self.page,
+            times,
+            width=80,
+            height=40,
+            strategy="sequential",
+            hide_grid=True,
+        )
+        with patch(
+            "mover.converter.raster_capture."
+            "_MAX_BATCH_FRAMES_PER_SCREENSHOT",
+            3,
+        ), patch(
+            "mover.converter.raster_capture."
+            "_capture_png_frames_sequential_at_times",
+            side_effect=AssertionError("unexpected sequential fallback"),
+        ), patch.object(
+            self.page,
+            "set_viewport_size",
+            side_effect=AssertionError("batch capture changed viewport"),
+        ):
+            batched = await capture_png_frames_at_times(
+                self.page,
+                times,
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+            )
+
+        self.assertEqual(len(sequential), len(times))
+        self.assertEqual(len(batched), len(times))
+        for frame_index, (sequential_frame, batched_frame) in enumerate(
+            zip(sequential, batched)
+        ):
+            self.assertEqual(sequential_frame.shape, (40, 80, 4))
+            self.assertEqual(batched_frame.shape, (40, 80, 4))
+            np.testing.assert_allclose(
+                batched_frame,
+                sequential_frame,
+                atol=1.5 / 255.0,
+                err_msg=f"frame {frame_index}",
+            )
+        np.testing.assert_array_equal(batched[2], batched[3])
+        self.assertEqual(self.page.viewport_size, expected_viewport)
+        await self._assert_reset_state(expected_state)
+
+    async def test_transparent_background_matches_between_strategies(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                document.body.style.setProperty(
+                    "background",
+                    "transparent",
+                    "important"
+                );
+                const source = document.querySelector("#source");
+                source.style.setProperty(
+                    "background-color",
+                    "transparent",
+                    "important"
+                );
+                source.style.setProperty(
+                    "background-image",
+                    "none",
+                    "important"
+                );
+            }"""
+        )
+        sequential = await capture_png_frames_at_times(
+            self.page,
+            [0.0, 0.0],
+            width=80,
+            height=40,
+            strategy="sequential",
+            hide_grid=True,
+            omit_background=True,
+        )
+        with patch(
+            "mover.converter.raster_capture."
+            "_capture_png_frames_sequential_at_times",
+            side_effect=AssertionError("unexpected sequential fallback"),
+        ):
+            batched = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 0.0],
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+                omit_background=True,
+            )
+        for frames in (sequential, batched):
+            self.assertEqual(frames[0][0, 0, 3], 0.0)
+            self.assertEqual(frames[0][-1, -1, 3], 0.0)
+
+    async def test_viewbox_only_svg_batches_at_exact_dimensions(self) -> None:
+        await self.page.evaluate(
+            """() => {
+                const source = document.querySelector("#source");
+                source.removeAttribute("width");
+                source.removeAttribute("height");
+                source.setAttribute("viewBox", "0 0 320 180");
+                source.classList.add("sized-source");
+                const style = document.createElement("style");
+                style.textContent = `
+                    body > svg.sized-source {
+                        border: 2px solid purple;
+                        padding: 1px;
+                    }
+                `;
+                document.head.appendChild(style);
+            }"""
+        )
+        captures = {
+            "sequential": await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=160,
+                height=90,
+                strategy="sequential",
+                hide_grid=True,
+            )
+        }
+        with patch(
+            "mover.converter.raster_capture."
+            "_capture_png_frames_sequential_at_times",
+            side_effect=AssertionError("unexpected sequential fallback"),
+        ):
+            captures["batched"] = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=160,
+                height=90,
+                strategy="batched",
+                hide_grid=True,
+            )
+        for strategy in ("sequential", "batched"):
+            self.assertTrue(
+                all(
+                    frame.shape == (90, 160, 4)
+                    for frame in captures[strategy]
+                )
+            )
+        for sequential, batched in zip(
+            captures["sequential"],
+            captures["batched"],
+        ):
+            np.testing.assert_allclose(
+                batched,
+                sequential,
+                atol=1.5 / 255.0,
+            )
+
+    async def test_nonuniform_page_background_falls_back_before_batching(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                document.body.style.setProperty(
+                    "background-image",
+                    "linear-gradient(red, blue)",
+                    "important"
+                );
+                window.originalBatchHelper = seekAndAppendToDomUsingTimes;
+                window.seekAndAppendToDomUsingTimes = () => {
+                    throw new Error("batch helper should not run");
+                };
+            }"""
+        )
+        try:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+            )
+        finally:
+            await self.page.evaluate(
+                """() => {
+                    window.seekAndAppendToDomUsingTimes =
+                        window.originalBatchHelper;
+                }"""
+            )
+        self.assertEqual(len(frames), 2)
+        self.assertTrue(all(frame.shape == (40, 80, 4) for frame in frames))
+
+    async def test_animated_page_background_uses_sequential_fallback(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                const originalGetTweensOf = tl_to_use.getTweensOf.bind(
+                    tl_to_use
+                );
+                window.originalGetTweensOf = originalGetTweensOf;
+                tl_to_use.getTweensOf = element => (
+                    element === document.body ? [{}] : originalGetTweensOf(element)
+                );
+                window.originalBatchHelper = seekAndAppendToDomUsingTimes;
+                window.seekAndAppendToDomUsingTimes = () => {
+                    throw new Error("batch helper should not run");
+                };
+            }"""
+        )
+        try:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+            )
+        finally:
+            await self.page.evaluate(
+                """() => {
+                    tl_to_use.getTweensOf = window.originalGetTweensOf;
+                    window.seekAndAppendToDomUsingTimes =
+                        window.originalBatchHelper;
+                }"""
+            )
+        self.assertEqual(len(frames), 2)
+
+    async def test_callback_page_background_uses_sequential_fallback(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                const source = document.querySelector("#source");
+                source.style.setProperty(
+                    "background-color",
+                    "transparent",
+                    "important"
+                );
+                source.style.setProperty(
+                    "background-image",
+                    "none",
+                    "important"
+                );
+                const originalSeek = tl_to_use.seek.bind(tl_to_use);
+                tl_to_use.seek = time => {
+                    originalSeek(time);
+                    document.body.style.setProperty(
+                        "background-color",
+                        time < 0.5 ? "rgb(255, 0, 0)" : "rgb(0, 0, 255)",
+                        "important"
+                    );
+                    return tl_to_use;
+                };
+            }"""
+        )
+        with patch(
+            "mover.converter.raster_capture."
+            "_capture_png_frames_sequential_at_times",
+            wraps=_capture_png_frames_sequential_at_times,
+        ) as sequential_capture:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+            )
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(sequential_capture.await_count, 1)
+
+    async def test_root_svg_compositing_preserves_static_background(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                document.body.style.setProperty(
+                    "background-color",
+                    "red",
+                    "important"
+                );
+                document.querySelector("#source").style.setProperty(
+                    "opacity",
+                    "0.5",
+                    "important"
+                );
+            }"""
+        )
+        sequential = await capture_png_frames_at_times(
+            self.page,
+            [0.0, 1.0],
+            width=80,
+            height=40,
+            strategy="sequential",
+            hide_grid=True,
+        )
+        with patch(
+            "mover.converter.raster_capture."
+            "_capture_png_frames_sequential_at_times",
+            side_effect=AssertionError("unexpected sequential fallback"),
+        ):
+            batched = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+            )
+        for sequential_frame, batched_frame in zip(sequential, batched):
+            for y, x in ((0, 0), (0, -1), (-1, 0), (-1, -1)):
+                np.testing.assert_allclose(
+                    batched_frame[y, x],
+                    sequential_frame[y, x],
+                    atol=1.5 / 255.0,
+                )
+
+    async def test_callback_gradient_triggers_full_sequential_fallback(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                const originalSeek = tl_to_use.seek.bind(tl_to_use);
+                tl_to_use.seek = time => {
+                    originalSeek(time);
+                    document.body.style.setProperty(
+                        "background-image",
+                        time < 0.5
+                            ? "none"
+                            : "linear-gradient(red, blue)",
+                        "important"
+                    );
+                    return tl_to_use;
+                };
+            }"""
+        )
+        with patch(
+            "mover.converter.raster_capture."
+            "_capture_png_frames_sequential_at_times",
+            wraps=_capture_png_frames_sequential_at_times,
+        ) as sequential_capture:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+            )
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(sequential_capture.await_count, 1)
+
+    async def test_batch_screenshot_failure_resets_before_fallback(
+        self,
+    ) -> None:
+        original_screenshot = self.page.screenshot
+        call_count = 0
+
+        async def fail_first_screenshot(**options):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise PlaywrightError("injected batch screenshot failure")
+            return await original_screenshot(**options)
+
+        with patch.object(
+            self.page,
+            "screenshot",
+            side_effect=fail_first_screenshot,
+        ):
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+            )
+        self.assertEqual(len(frames), 2)
+        await self._assert_reset_state()
+
+    async def test_invalid_batch_geometry_resets_before_fallback(
+        self,
+    ) -> None:
+        with patch(
+            "mover.converter.raster_capture._validate_batch_geometry",
+            side_effect=_BatchGeometryError("injected geometry failure"),
+        ), patch(
+            "mover.converter.raster_capture."
+            "_capture_png_frames_sequential_at_times",
+            wraps=_capture_png_frames_sequential_at_times,
+        ) as sequential_capture:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=80,
+                height=40,
+                strategy="batched",
+                hide_grid=True,
+            )
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(sequential_capture.await_count, 1)
+        await self._assert_reset_state()
+
+    async def test_nested_source_svg_uses_sequential_fallback(self) -> None:
+        await self.page.evaluate(
+            """() => {
+                const wrapper = document.createElement("section");
+                const source = document.querySelector("#source");
+                source.replaceWith(wrapper);
+                wrapper.appendChild(source);
+            }"""
+        )
+        frames = await capture_png_frames_at_times(
+            self.page,
+            [0.0, 1.0],
+            width=80,
+            height=40,
+            strategy="batched",
+            hide_grid=True,
+        )
+        self.assertEqual(len(frames), 2)
+        self.assertTrue(all(frame.shape == (40, 80, 4) for frame in frames))
+
+    async def test_fewer_than_two_frames_fit_uses_full_sequential_fallback(
+        self,
+    ) -> None:
+        with patch(
+            "mover.converter.raster_capture."
+            "_capture_png_frames_sequential_at_times",
+            wraps=_capture_png_frames_sequential_at_times,
+        ) as sequential_capture:
+            frames = await capture_png_frames_at_times(
+                self.page,
+                [0.0, 1.0],
+                width=700,
+                height=700,
+                strategy="batched",
+                hide_grid=True,
+            )
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(sequential_capture.await_count, 1)
+        self.assertTrue(all(frame.shape == (700, 700, 4) for frame in frames))
+
+    async def test_scale_one_capture_rejects_nonunit_dpr(self) -> None:
+        page = await self.browser.new_page(device_scale_factor=2)
+        try:
+            with self.assertRaisesRegex(ValueError, "devicePixelRatio == 1"):
+                await capture_png_frames_at_times(page, [0.0])
+        finally:
+            await page.close()
+
+    async def test_batch_capture_restores_scroll_position(self) -> None:
+        await self.page.set_viewport_size({"width": 1280, "height": 200})
+        await self.page.evaluate(
+            """() => {
+                document.body.style.setProperty(
+                    "display",
+                    "block",
+                    "important"
+                );
+                const spacer = document.createElement("div");
+                spacer.id = "scroll-spacer";
+                spacer.style.height = "2000px";
+                document.body.appendChild(spacer);
+                window.scrollTo(0, 500);
+            }"""
+        )
+        before = await self.page.evaluate("window.scrollY")
+        await capture_png_frames_at_times(
+            self.page,
+            [0.0, 1.0],
+            width=128,
+            height=128,
+            strategy="batched",
+            hide_grid=True,
+        )
+        after = await self.page.evaluate("window.scrollY")
+        self.assertEqual(before, 500)
+        self.assertEqual(after, before)
 
     async def test_automatic_batch_schedule_includes_endpoint_and_static_frame(
         self,
@@ -458,7 +980,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(synchronized["progress"], "50")
 
         before_batch = await self.page.evaluate(
-            """() => {
+            """async () => {
                 tl_to_use.reversed(true);
                 tl_to_use.paused(true);
                 const state = {
@@ -466,7 +988,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     targetPaused: tl_to_use.paused(),
                     targetReversed: tl_to_use.reversed(),
                 };
-                seekAndAppendToDomUsingTimes([0, 0.75], 128, false);
+                await seekAndAppendToDomUsingTimes([0, 0.75], 128, false);
                 return state;
             }"""
         )
@@ -474,9 +996,9 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             "targetUpdateCount"
         )
         self.assertEqual(
-            await self.page.locator("body > svg #shape").get_attribute(
-                "data-progress"
-            ),
+            await self.page.locator(
+                "body > svg:not([data-mover-batch-frame]) #shape"
+            ).get_attribute("data-progress"),
             "75",
         )
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
@@ -508,6 +1030,74 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(after_batch["progress"], "50")
         self.assertTrue(initial_state["targetPaused"])
+
+    async def test_batch_clone_keeps_endpoint_svg_transform_visible(
+        self,
+    ) -> None:
+        await self.page.add_script_tag(path=str(GSAP_JS))
+        clone_state = await self.page.evaluate(
+            """async () => {
+                const source = document.querySelector("#source");
+                const shape = document.querySelector("#shape");
+                source.setAttribute("width", "80");
+                source.setAttribute("height", "40");
+                source.setAttribute("viewBox", "0 0 80 40");
+                shape.setAttribute("cx", "10");
+                shape.setAttribute("cy", "20");
+                shape.setAttribute("r", "6");
+                shape.setAttribute(
+                    "data-layout-width",
+                    String(source.getBoundingClientRect().width)
+                );
+                window.tl_to_use = gsap.timeline({paused: true});
+                tl_to_use.to(shape, {
+                    x: 50,
+                    duration: 1,
+                    ease: "none",
+                    onUpdate: () => {
+                        shape.setAttribute(
+                            "data-layout-width",
+                            String(source.getBoundingClientRect().width)
+                        );
+                    },
+                });
+                await seekAndAppendToDomUsingTimes(
+                    [0, 0.5, 1],
+                    80,
+                    40,
+                    true
+                );
+                return Array.from(
+                    document.querySelectorAll("[data-mover-batch-frame]")
+                ).map(wrapper => {
+                    const clone = wrapper.querySelector("#shape");
+                    const wrapperRect = wrapper.getBoundingClientRect();
+                    const cloneRect = clone.getBoundingClientRect();
+                    return {
+                        style: clone.getAttribute("style"),
+                        x: cloneRect.x - wrapperRect.x,
+                        y: cloneRect.y - wrapperRect.y,
+                        width: cloneRect.width,
+                        height: cloneRect.height,
+                        layoutWidth: clone.getAttribute(
+                            "data-layout-width"
+                        ),
+                    };
+                });
+            }"""
+        )
+        try:
+            self.assertEqual(len(clone_state), 3)
+            self.assertAlmostEqual(clone_state[0]["x"], 4, delta=1)
+            self.assertAlmostEqual(clone_state[1]["x"], 29, delta=1)
+            self.assertAlmostEqual(clone_state[2]["x"], 54, delta=1)
+            self.assertGreater(clone_state[2]["width"], 10)
+            self.assertEqual(
+                [state["layoutWidth"] for state in clone_state],
+                ["80", "80", "80"],
+            )
+        finally:
+            await self.page.evaluate("resetSeekAndAppend()")
 
     async def test_rendered_data_runs_callback_derived_svg_updates(self) -> None:
         await self.page.add_script_tag(path=str(GSAP_JS))
@@ -681,6 +1271,65 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             for memory_frame, disk_path in zip(default_frames, disk_png_paths):
                 disk_frame = (
                     np.asarray(Image.open(disk_path).convert("RGBA"), dtype=np.float32)
+                    / 255.0
+                )
+                np.testing.assert_array_equal(memory_frame, disk_frame)
+
+            batched_memory_output = (
+                Path(temp_dir) / "missing-batched" / "frames"
+            )
+            batched_frames, batched_duration = (
+                await capture_frames_server_driven(
+                    self.page,
+                    str(batched_memory_output),
+                    fps=1,
+                    output_format="png",
+                    in_memory=True,
+                    hide_grid=True,
+                    capture_strategy="batched",
+                    width=64,
+                    height=32,
+                )
+            )
+            batched_disk_output = Path(temp_dir) / "disk-batched"
+            with patch(
+                "mover.converter.mover_converter.Image.fromarray",
+                wraps=Image.fromarray,
+            ) as image_fromarray:
+                await capture_frames_server_driven(
+                    self.page,
+                    str(batched_disk_output),
+                    fps=1,
+                    output_format="png",
+                    hide_grid=True,
+                    capture_strategy="batched",
+                    width=64,
+                    height=32,
+                )
+            self.assertTrue(image_fromarray.call_args_list)
+            self.assertTrue(
+                all(
+                    call.args[0].dtype == np.uint8
+                    for call in image_fromarray.call_args_list
+                )
+            )
+            self.assertEqual(batched_duration, 1)
+            self.assertEqual(len(batched_frames), 2)
+            self.assertFalse(batched_memory_output.parent.exists())
+            batched_disk_paths = sorted(
+                batched_disk_output.glob("frame_*.png")
+            )
+            self.assertEqual(len(batched_disk_paths), 2)
+            for memory_frame, disk_path in zip(
+                batched_frames,
+                batched_disk_paths,
+            ):
+                self.assertEqual(memory_frame.shape, (32, 64, 4))
+                disk_frame = (
+                    np.asarray(
+                        Image.open(disk_path).convert("RGBA"),
+                        dtype=np.float32,
+                    )
                     / 255.0
                 )
                 np.testing.assert_array_equal(memory_frame, disk_frame)
