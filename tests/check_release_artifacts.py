@@ -127,7 +127,7 @@ def check_wheel(path: Path) -> tuple[set[str], dict[str, bytes], dict[str, objec
 
     metadata = normalized_metadata(metadata_from_wheel(contents))
     require(metadata["Name"] == "mover", metadata)
-    require(metadata["Version"] == "0.2.0", metadata)
+    require(metadata["Version"] == "0.3.0", metadata)
     require(metadata["Requires-Python"] == "<3.13,>=3.10", metadata)
     for extra in ("full", "groq", "media", "ollama", "openai", "vertex"):
         require(extra in metadata["Provides-Extra"], f"Missing extra: {extra}")

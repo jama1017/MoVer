@@ -193,7 +193,12 @@ The converter writes:
 The Python capture API also supports in-memory PNG frames as normalized NumPy
 arrays and in-memory SVG frames as text streams. Repeated capture restores the
 page’s capture state between runs.
-Use `capture_duration=<seconds>` or `--capture-duration <seconds>` for infinitely repeating animations.
+
+MoVer automatically controls every GSAP root animation present when conversion
+starts, including legacy `tl`, renamed or sibling timelines, and standalone
+tweens. No timeline name or registration hook is required. Use
+`capture_duration=<seconds>` or `--capture-duration <seconds>` for infinitely
+repeating animations.
 
 GIF output requires a working FFmpeg installation. MP4 uses FFmpeg when
 available and otherwise uses the validated OpenCV fallback from `mover[media]`
