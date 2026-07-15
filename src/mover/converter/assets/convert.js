@@ -199,6 +199,76 @@ function initializeTimelineControl(captureDuration = null) {
     };
 }
 
+function installTimelineForCapture(
+    timeline,
+    captureDuration = moverCaptureDuration,
+) {
+    if (!isControllableGsapTimeline(timeline)) {
+        throw new Error(
+            "rebuildAnimation must return a controllable GSAP timeline",
+        );
+    }
+    setMoverCaptureDuration(captureDuration);
+    const disabledDevTools = disableGsapDevTools();
+    gsap.globalTimeline.pause();
+    const resumedChildren = resumeControlledChildren(timeline);
+    tl_to_use = timeline;
+    tl_to_use.seek(0, false).pause();
+    moverControlPrepared = false;
+    moverPreparedAnimations = null;
+    moverPreparedControlDuration = null;
+    assertNoLateRootAnimations();
+    return {
+        source: "rebuild-hook",
+        duration: tl_to_use.totalDuration(),
+        childCount: tl_to_use.getChildren(true, true, true).length,
+        resumedChildren,
+        disabledDevTools,
+    };
+}
+
+function rebuildAnimationForCapture(
+    completeParams,
+    captureDuration = moverCaptureDuration,
+) {
+    if (
+        completeParams === null
+        || typeof completeParams !== "object"
+        || Array.isArray(completeParams)
+    ) {
+        throw new TypeError("completeParams must be a plain object");
+    }
+    if (typeof globalThis.rebuildAnimation !== "function") {
+        throw new Error("Page does not define rebuildAnimation(completeParams)");
+    }
+
+    const previousTimeline = tl_to_use;
+    const rebuiltTimeline = globalThis.rebuildAnimation(completeParams);
+    if (
+        rebuiltTimeline
+        && typeof rebuiltTimeline.then === "function"
+        && !isControllableGsapTimeline(rebuiltTimeline)
+    ) {
+        throw new Error("rebuildAnimation must be synchronous");
+    }
+    if (
+        previousTimeline
+        && previousTimeline !== rebuiltTimeline
+        && previousTimeline.parent
+    ) {
+        throw new Error(
+            "rebuildAnimation must dispose the previous controlled timeline",
+        );
+    }
+
+    const selection = installTimelineForCapture(
+        rebuiltTimeline,
+        captureDuration,
+    );
+    const info = prepareTimelineForCapture();
+    return {selection, info};
+}
+
 function seekControlledTimeline(time) {
     resumeControlledChildren(tl_to_use);
     tl_to_use.seek(time, false);

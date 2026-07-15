@@ -27,6 +27,7 @@ tests/*
 !tests/test_converter_capture.py
 !tests/test_converter_dom.py
 !tests/test_converter_timeline.py
+!tests/test_render_session.py
 !tests/test_animation_prompt_assets.py
 !tests/test_mover_querier.py
 !tests/test_transform_types.py
@@ -56,6 +57,7 @@ examples/svg/eye.svg
 !examples/translate_right*
 !examples/two_black_squares*
 !examples/teaser_hi*
+!examples/render_session_demo.py
 .cursor/*
 .vscode/*
 docs/*

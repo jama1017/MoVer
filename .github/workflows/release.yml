@@ -171,11 +171,12 @@ jobs:
           MOVER_REQUIRE_BROWSER: "1"
           PYTHONPATH: ${{ github.workspace }}/tests
         run: |
-          python -m unittest \
+          python -W error::ResourceWarning -m unittest \
             test_animation_prompt_assets \
             test_converter_capture \
             test_converter_dom \
             test_converter_timeline \
+            test_render_session \
             test_mover_querier \
             test_transform_types \
             -v
