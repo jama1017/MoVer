@@ -26,6 +26,16 @@ from mover.converter.raster_capture import (
     capture_png_frames_at_times,
 )
 
+PROPERTY_REGISTRY = json.loads(
+    (
+        Path(__file__).parent.parent
+        / "src"
+        / "mover"
+        / "converter"
+        / "assets"
+        / "property_registry.json"
+    ).read_text(encoding="utf-8")
+)
 
 OPTIONAL_JSON_FIXTURE = """<!doctype html>
 <html>
@@ -590,8 +600,30 @@ class OptionalJsonOutputIntegrationTest(unittest.TestCase):
 
             self.assertEqual(main_data["info"]["fps"], 10)
             self.assertEqual(rendered_data["info"]["fps"], 10)
-            self.assertIn("square", properties)
-            self.assertTrue(properties["square"])
+            self.assertEqual(len(main_data["square"]["transformedPts"]), 2)
+            self.assertNotEqual(
+                main_data["square"]["transformedPts"][0],
+                main_data["square"]["transformedPts"][-1],
+            )
+            self.assertEqual(
+                rendered_data["info"]["propertyConfig"],
+                {
+                    **PROPERTY_REGISTRY["defaults"],
+                    "svgAttributes": [],
+                },
+            )
+            for property_name in (
+                PROPERTY_REGISTRY["defaults"]["spatial"]
+                + PROPERTY_REGISTRY["defaults"]["visual"]
+            ):
+                self.assertEqual(
+                    len(rendered_data["square"][property_name]),
+                    2,
+                )
+            self.assertEqual(
+                set(properties["square"]),
+                {"transformedPts", "translateX"},
+            )
 
 
 if __name__ == "__main__":

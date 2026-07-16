@@ -373,8 +373,69 @@ function isGraphicalElement(element) {
     return !NON_GRAPHICAL_TAGS.has(element.tagName.toLowerCase());
 }
 
+function getMoverElementPath(element, root = svgRef) {
+    const parts = [];
+    let current = element;
+    while (current && current !== root && current.parentElement) {
+        const index = Array.prototype.indexOf.call(
+            current.parentElement.children,
+            current,
+        );
+        parts.unshift(`${current.tagName.toLowerCase()}-${index}`);
+        current = current.parentElement;
+    }
+    return parts.join("_");
+}
+
+const moverElementDataIds = new WeakMap();
+
+function getMoverElementDataId(element, root = svgRef) {
+    if (moverElementDataIds.has(element)) {
+        return moverElementDataIds.get(element);
+    }
+    const sourceId = element.id || "";
+    if (sourceId) {
+        const matches = Array.from(root.querySelectorAll("[id]"))
+            .filter(candidate => candidate.id === sourceId);
+        if (matches.length === 1) {
+            moverElementDataIds.set(element, sourceId);
+            return sourceId;
+        }
+    }
+
+    const path = getMoverElementPath(element, root);
+    const existingIds = new Set(
+        Array.from(root.querySelectorAll("[id]"))
+            .map(candidate => candidate.id)
+    );
+    let key = `__mover_${path}`;
+    while (existingIds.has(key)) {
+        key = `_${key}`;
+    }
+    moverElementDataIds.set(element, key);
+    return key;
+}
+
+function addGeneratedElementKeyInfo(info, elements) {
+    const generated = {};
+    elements.forEach(element => {
+        const key = getMoverElementDataId(element);
+        if (key !== element.id) {
+            generated[key] = {
+                sourceId: element.id || null,
+                path: getMoverElementPath(element),
+                tag: element.tagName.toLowerCase(),
+            };
+        }
+    });
+    if (Object.keys(generated).length > 0) {
+        info["generated-element-keys"] = generated;
+    }
+    return info;
+}
+
 function getAllAnimatedElements(svgRef) {
-    let svgChildren = svgRef.children
+    const svgChildren = svgRef.querySelectorAll("*")
     let res = []
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
@@ -1240,10 +1301,11 @@ function resetSeekAndAppend() {
 function convertToKeyframes(allElems) {
     let res = { "info": {} }
     res["info"]["scene-size"] = getSvgSceneSize()
+    addGeneratedElementKeyInfo(res["info"], allElems)
 
     for (let j = 0; j < allElems.length; j++) {
         let elem = allElems[j]
-        let elemName = elem.id
+        let elemName = getMoverElementDataId(elem)
         res[elemName] = {}
     }
 
@@ -1319,22 +1381,27 @@ function convertToKeyframes(allElems) {
                     }
                 })
             }
-            res[elem.id] = elementData
+            res[getMoverElementDataId(elem)] = elementData
         }
     }
     return res
 }
 
-function getAllTransformationValues(animatedElems, fps = 60) {
+function getAllTransformationValues(
+    animatedElems,
+    fps = 60,
+    frameObserver = null,
+) {
     const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
 
     let res = {}
     res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
     res["info"]["scene-size"] = getSvgSceneSize()
+    addGeneratedElementKeyInfo(res["info"], animatedElems)
 
     for (let j = 0; j < animatedElems.length; j++) {
         let elem = animatedElems[j]
-        let elemName = elem.id
+        let elemName = getMoverElementDataId(elem)
         res[elemName] = {}
     }
 
@@ -1352,17 +1419,18 @@ function getAllTransformationValues(animatedElems, fps = 60) {
             let tween_info = { "type": tween_type, "duration": tween_duration, "start": tween_start, "end": tween_end }
             tweens_info.push(tween_info)
         })
-        res[elem.id]["tweens"] = tweens_info
+        res[getMoverElementDataId(elem)]["tweens"] = tweens_info
     }
 
     for (let i = 0; i < steps + 1; i++) {
-        seekControlledTimeline(getSeekTime(i, sampleFps, animDuration))
+        const time = getSeekTime(i, sampleFps, animDuration)
+        seekControlledTimeline(time)
 
         for (let j = 0; j < animatedElems.length; j++) {
             let elem = animatedElems[j]
             let ctm = SVGMatrixToPy(elem.getCTM())
 
-            let elemName = elem.id
+            let elemName = getMoverElementDataId(elem)
             let currElemData = res[elemName]
 
             currElemData["transformedPts"] = currElemData["transformedPts"] || [];
@@ -1397,6 +1465,9 @@ function getAllTransformationValues(animatedElems, fps = 60) {
             currElemData["origin"].push(analyzedResult["origin"]);
             currElemData["wldOrigin"] = currElemData["wldOrigin"] || [];
             currElemData["wldOrigin"].push(analyzedResult["wldOrigin"]);
+        }
+        if (typeof frameObserver === "function") {
+            frameObserver(i, time);
         }
     }
 
@@ -1519,7 +1590,11 @@ function createObjectList(animatedElems, non_animatedElems) {
     let objectData = []
     for (var elem of elems) {
         elem_data = {}
-        elem_data["id"] = elem.id
+        const elementDataId = getMoverElementDataId(elem)
+        elem_data["id"] = elementDataId
+        if (elementDataId !== elem.id) {
+            elem_data["sourceId"] = elem.id || null
+        }
 
         if (elem.id.includes("ignore")) {
             continue
@@ -1726,7 +1801,7 @@ function extractAnimatedProperties(svgRef, registry) {
     const spatialNames = new Set(Object.keys(registry.spatial));
 
     const result = {};
-    const svgChildren = svgRef.children;
+    const svgChildren = svgRef.querySelectorAll("*");
     for (let i = 0; i < svgChildren.length; i++) {
         const child = svgChildren[i];
         if (!isGraphicalElement(child)) continue;
@@ -1759,77 +1834,95 @@ function extractAnimatedProperties(svgRef, registry) {
                 regNames.add("transformedPts");
             }
         }
-        result[child.id] = [...regNames];
+        result[getMoverElementDataId(child)] = [...regNames];
     }
     return result;
 }
 
+
+function resolveComparisonPropertyConfig(registry, propertyConfig = null) {
+    // null propertyConfig → use registry.defaults
+    const config = propertyConfig || {
+        spatial: registry.defaults.spatial,
+        visual: registry.defaults.visual,
+        svgAttributes: []
+    };
+    return config;
+}
+
+function initializeRenderedData(allElems, registry, propertyConfig, fps) {
+    const config = resolveComparisonPropertyConfig(
+        registry,
+        propertyConfig,
+    );
+    const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
+    let res = {}
+    res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
+    res["info"]["scene-size"] = getSvgSceneSize()
+    addGeneratedElementKeyInfo(res["info"], allElems)
+
+    for (let j = 0; j < allElems.length; j++) {
+        let elem = allElems[j]
+        let elemName = getMoverElementDataId(elem)
+        res[elemName] = {}
+    }
+    res["info"]["propertyConfig"] = config;
+    return res;
+}
+
+function recordRenderedDataFrame(res, allElems, registry) {
+    const config = res["info"]["propertyConfig"];
+    const visualProps = config.visual || [];
+    for (let j = 0; j < allElems.length; j++) {
+        let elem = allElems[j]
+        let elemName = getMoverElementDataId(elem)
+        let currElemData = res[elemName]
+
+        // Spatial properties — use getter recipe from registry
+        for (const prop of (config.spatial || [])) {
+            const propSpec = registry.spatial[prop];
+            if (!propSpec) {
+                console.warn(`Unknown spatial property: ${prop}`);
+                continue;
+            }
+            currElemData[prop] = currElemData[prop] || [];
+            currElemData[prop].push(getSpatialValue(elem, propSpec));
+        }
+
+        // Visual (CSS computed style) — each property gets its own array
+        if (visualProps.length > 0) {
+            const style = window.getComputedStyle(elem);
+            for (const prop of visualProps) {
+                currElemData[prop] = currElemData[prop] || [];
+                currElemData[prop].push(style[prop]);
+            }
+        }
+
+        // SVG attributes — generic, no per-property logic
+        for (const attr of (config.svgAttributes || [])) {
+            currElemData[attr] = currElemData[attr] || [];
+            currElemData[attr].push(elem.getAttribute(attr));
+        }
+    }
+    return res;
+}
 
 function createRenderedData(allElems, registry, propertyConfig = null, fps = 60) {
     // registry = property_registry.json (auto-loaded by Python)
     // propertyConfig = { spatial: ["transformedPts", "rotate", ...],
     //                    visual: ["fill", "opacity", ...],
     //                    svgAttributes: ["d", "r"] }
-    // null propertyConfig → use registry.defaults
-
-    const config = propertyConfig || {
-        spatial: registry.defaults.spatial,
-        visual: registry.defaults.visual,
-        svgAttributes: []
-    };
-    const visualProps = config.visual || [];
-
-    const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
-
-    let res = {}
-    res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
-    res["info"]["scene-size"] = getSvgSceneSize()
-
-    for (let j = 0; j < allElems.length; j++) {
-        let elem = allElems[j]
-        let elemName = elem.id
-        res[elemName] = {}
-    }
-
-    // Get comparison properties at each timestep
+    const res = initializeRenderedData(
+        allElems,
+        registry,
+        propertyConfig,
+        fps,
+    );
+    const { duration, fps: sampleFps, steps } = res["info"];
     for (let i = 0; i < steps + 1; i++) {
-        seekToTime(getSeekTime(i, sampleFps, animDuration))
-
-        for (let j = 0; j < allElems.length; j++) {
-            let elem = allElems[j]
-            let elemName = elem.id
-            let currElemData = res[elemName]
-
-            // Spatial properties — use getter recipe from registry
-            for (const prop of (config.spatial || [])) {
-                const propSpec = registry.spatial[prop];
-                if (!propSpec) {
-                    console.warn(`Unknown spatial property: ${prop}`);
-                    continue;
-                }
-                currElemData[prop] = currElemData[prop] || [];
-                currElemData[prop].push(getSpatialValue(elem, propSpec));
-            }
-
-            // Visual (CSS computed style) — each property gets its own array
-            if (visualProps.length > 0) {
-                const style = window.getComputedStyle(elem);
-                for (const prop of visualProps) {
-                    currElemData[prop] = currElemData[prop] || [];
-                    currElemData[prop].push(style[prop]);
-                }
-            }
-
-            // SVG attributes — generic, no per-property logic
-            for (const attr of (config.svgAttributes || [])) {
-                currElemData[attr] = currElemData[attr] || [];
-                currElemData[attr].push(elem.getAttribute(attr));
-            }
-        }
+        seekToTime(getSeekTime(i, sampleFps, duration))
+        recordRenderedDataFrame(res, allElems, registry);
     }
-
-    // Store config in info for downstream consumers
-    res["info"]["propertyConfig"] = config;
 
     // Reset timeline to start
     seekControlledTimeline(0);
@@ -1847,7 +1940,27 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
     }
     let nonAnimatedElems = getNonAnimatedElements(svgRef);
     let allElems = [...animatedElems, ...nonAnimatedElems];
-    let animData = getAllTransformationValues(allElems, fps);
+    let renderedData = null;
+    if (saveForComparison) {
+        renderedData = initializeRenderedData(
+            allElems,
+            registry,
+            comparisonPropertyConfig,
+            fps,
+        );
+    }
+    const renderedFrameObserver = renderedData
+        ? () => recordRenderedDataFrame(
+            renderedData,
+            allElems,
+            registry,
+        )
+        : null;
+    let animData = getAllTransformationValues(
+        allElems,
+        fps,
+        renderedFrameObserver,
+    );
     let objectData = createObjectList(animatedElems, nonAnimatedElems)
     animData["info"]["objects"] = objectData
     console.log("port: ", port)
@@ -1873,7 +1986,6 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
     }
 
     if (saveForComparison) {
-        let renderedData = createRenderedData(allElems, registry, comparisonPropertyConfig, fps);
         const response_rendered = await fetch(`http://localhost:${port}/convert-js-to-rendered-json`, {
             method: 'POST',
             headers: {
