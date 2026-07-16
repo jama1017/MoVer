@@ -616,6 +616,16 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
 
             ## Server-driven animation output — no HTTP round-trips per frame.
             if create_video:
+                # JSON extraction traverses the complete timeline. Reload before
+                # visual capture so history-sensitive GSAP initialization is
+                # identical to a fresh source page.
+                await page.reload(wait_until="networkidle")
+                await page.evaluate("document.fonts.ready")
+                await page.evaluate(
+                    "duration => initializeTimelineControl(duration)",
+                    normalized_capture_duration,
+                )
+                await page.evaluate("prepareTimelineForCapture()")
                 output_format = output_format.lower()
                 if output_format not in SUPPORTED_OUTPUT_FORMATS:
                     raise ValueError(f"Unsupported output format: {output_format}")

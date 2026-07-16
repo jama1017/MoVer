@@ -3,6 +3,8 @@ let moverCaptureDuration = null;
 let moverControlPrepared = false;
 let moverPreparedAnimations = null;
 let moverPreparedControlDuration = null;
+let moverRecordedRootTimeline = null;
+let moverRecordedRootInfo = null;
 
 function normalizeMoverCaptureDuration(value) {
     if (value === null || value === undefined) {
@@ -30,12 +32,12 @@ function setMoverCaptureDuration(value) {
 
 function isControllableGsapTimeline(animation) {
     const requiredMethods = [
-        "seek",
+        "duration",
         "pause",
+        "totalTime",
         "totalDuration",
         "getChildren",
         "getTweensOf",
-        "totalProgress",
     ];
     return Boolean(
         animation
@@ -43,31 +45,17 @@ function isControllableGsapTimeline(animation) {
     );
 }
 
-function normalizeExportedRootChildren(timeline) {
-    const children = timeline
-        .getChildren(false, true, true)
-        .filter(child => {
-            if (isImmediateRootSetupTween(child)) {
-                timeline.remove(child);
-                return false;
-            }
-            return true;
-        });
-    children.forEach(child => {
-        const delay = (
-            typeof child.delay === "function"
-        ) ? child.delay() : 0;
-        child.startTime(delay);
-    });
-
-    return resumeControlledChildren(timeline);
-}
-
 function resumeControlledChildren(timeline) {
     let resumedChildren = 0;
     timeline.getChildren(true, true, true).forEach(child => {
         if (typeof child.paused === "function" && child.paused()) {
+            const startTime = (
+                typeof child.startTime === "function"
+            ) ? child.startTime() : null;
             child.paused(false);
+            if (Number.isFinite(startTime)) {
+                child.startTime(startTime);
+            }
             resumedChildren++;
         }
     });
@@ -90,22 +78,76 @@ function isGsapDelayedCall(animation) {
     );
 }
 
-function isImmediateRootSetupTween(animation) {
-    if (
-        !animation
-        || typeof animation.duration !== "function"
-        || typeof animation.delay !== "function"
-        || typeof animation.targets !== "function"
-    ) {
-        return false;
+function getAnimationDelay(animation) {
+    if (!animation || typeof animation.delay !== "function") {
+        return 0;
     }
-    const targets = animation.targets();
-    return (
-        animation.duration() === 0
-        && animation.delay() === 0
-        && targets.length > 0
-        && targets.every(target => typeof target !== "function")
-    );
+    const delay = Number(animation.delay());
+    return Number.isFinite(delay) ? delay : 0;
+}
+
+function getInitialRootRecords(globalRoot) {
+    const snapshot = (
+        typeof moverInitialRootSnapshot !== "undefined"
+        && Array.isArray(moverInitialRootSnapshot)
+    )
+        ? moverInitialRootSnapshot
+        : globalRoot.getChildren(false, true, true);
+    return snapshot
+        .map(record => {
+            const animation = record && record.animation
+                ? record.animation
+                : record;
+            const recordedDelay = record && record.animation
+                ? Number(record.delay)
+                : getAnimationDelay(animation);
+            const recordedStart = record && record.animation
+                ? Number(record.startTime)
+                : Number(animation.startTime());
+            return {
+                animation,
+                delay: Number.isFinite(recordedDelay) ? recordedDelay : 0,
+                startTime: Number.isFinite(recordedStart) ? recordedStart : 0,
+            };
+        })
+        .filter(root => !isGsapDelayedCall(root.animation));
+}
+
+function createRecordedRootTimeline() {
+    const globalRoot = gsap.globalTimeline;
+    globalRoot.pause();
+
+    // Snapshot before creating the wrapper so it cannot collect itself.
+    const roots = getInitialRootRecords(globalRoot);
+    const commonEpoch = roots.length > 0
+        ? Math.min(...roots.map(root => root.startTime - root.delay))
+        : 0;
+    const timeline = gsap.timeline({
+        autoRemoveChildren: false,
+        paused: true,
+        smoothChildTiming: true,
+    });
+
+    // This timeline is controlled directly; it must not remain ticker-driven.
+    globalRoot.remove(timeline);
+    roots.forEach(root => {
+        timeline.add(
+            root.animation,
+            root.startTime - root.delay - commonEpoch,
+        );
+    });
+
+    return {timeline, commonEpoch, rootCount: roots.length};
+}
+
+function initializeControlledTimelineAtZero(timeline) {
+    const duration = timeline.totalDuration();
+    if (Number.isFinite(duration) && duration > 0) {
+        const epsilon = Math.min(0.000001, duration / 1000000);
+        timeline.totalTime(epsilon, false);
+    }
+    timeline.totalTime(0, false).pause();
+    return timeline;
 }
 
 function getUnexpectedRootAnimations() {
@@ -168,27 +210,44 @@ function disableGsapDevTools() {
 
 function initializeTimelineControl(captureDuration = null) {
     setMoverCaptureDuration(captureDuration);
+    if (typeof stopTimelineVisualizationPlayback === "function") {
+        stopTimelineVisualizationPlayback();
+    }
     const disabledDevTools = disableGsapDevTools();
-    gsap.globalTimeline.pause();
-    const selected = gsap.exportRoot({
-        paused: true,
-        smoothChildTiming: false,
-    }, false);
+    const recorded = (
+        moverRecordedRootTimeline
+        && tl_to_use === moverRecordedRootTimeline
+        && moverRecordedRootInfo
+    )
+        ? {
+            timeline: moverRecordedRootTimeline,
+            ...moverRecordedRootInfo,
+        }
+        : createRecordedRootTimeline();
+    const selected = recorded.timeline;
 
     if (!isControllableGsapTimeline(selected)) {
         throw new Error(
-            "Exported GSAP root is not a Timeline with the "
-            + "required seek, duration, child, and tween methods"
+            "Recorded GSAP root is not a Timeline with the "
+            + "required duration, total-time, child, and tween methods"
         );
     }
 
-    const resumedChildren = normalizeExportedRootChildren(selected);
+    const resumedChildren = resumeControlledChildren(selected);
     tl_to_use = selected;
-    tl_to_use.seek(0, false).pause();
+    moverRecordedRootTimeline = selected;
+    moverRecordedRootInfo = {
+        commonEpoch: recorded.commonEpoch,
+        rootCount: recorded.rootCount,
+    };
+    initializeControlledTimelineAtZero(tl_to_use);
     moverControlPrepared = false;
     moverPreparedAnimations = null;
     moverPreparedControlDuration = null;
     assertNoLateRootAnimations();
+    if (typeof refreshTimelineVisualization === "function") {
+        refreshTimelineVisualization();
+    }
 
     return {
         source: "exported-root",
@@ -196,6 +255,9 @@ function initializeTimelineControl(captureDuration = null) {
         childCount: tl_to_use.getChildren(true, true, true).length,
         resumedChildren,
         disabledDevTools,
+        strategy: "recorded-root",
+        rootCount: recorded.rootCount,
+        commonEpoch: recorded.commonEpoch,
     };
 }
 
@@ -209,15 +271,23 @@ function installTimelineForCapture(
         );
     }
     setMoverCaptureDuration(captureDuration);
+    if (typeof stopTimelineVisualizationPlayback === "function") {
+        stopTimelineVisualizationPlayback();
+    }
     const disabledDevTools = disableGsapDevTools();
     gsap.globalTimeline.pause();
     const resumedChildren = resumeControlledChildren(timeline);
     tl_to_use = timeline;
-    tl_to_use.seek(0, false).pause();
+    moverRecordedRootTimeline = null;
+    moverRecordedRootInfo = null;
+    initializeControlledTimelineAtZero(tl_to_use);
     moverControlPrepared = false;
     moverPreparedAnimations = null;
     moverPreparedControlDuration = null;
     assertNoLateRootAnimations();
+    if (typeof refreshTimelineVisualization === "function") {
+        refreshTimelineVisualization();
+    }
     return {
         source: "rebuild-hook",
         duration: tl_to_use.totalDuration(),
@@ -271,8 +341,7 @@ function rebuildAnimationForCapture(
 
 function seekControlledTimeline(time) {
     resumeControlledChildren(tl_to_use);
-    tl_to_use.seek(time, false);
-    tl_to_use.pause();
+    tl_to_use.totalTime(time, false).pause();
     assertNoLateRootAnimations();
     assertPreparedTimelineStable();
     return tl_to_use;
@@ -304,8 +373,69 @@ function isGraphicalElement(element) {
     return !NON_GRAPHICAL_TAGS.has(element.tagName.toLowerCase());
 }
 
+function getMoverElementPath(element, root = svgRef) {
+    const parts = [];
+    let current = element;
+    while (current && current !== root && current.parentElement) {
+        const index = Array.prototype.indexOf.call(
+            current.parentElement.children,
+            current,
+        );
+        parts.unshift(`${current.tagName.toLowerCase()}-${index}`);
+        current = current.parentElement;
+    }
+    return parts.join("_");
+}
+
+const moverElementDataIds = new WeakMap();
+
+function getMoverElementDataId(element, root = svgRef) {
+    if (moverElementDataIds.has(element)) {
+        return moverElementDataIds.get(element);
+    }
+    const sourceId = element.id || "";
+    if (sourceId) {
+        const matches = Array.from(root.querySelectorAll("[id]"))
+            .filter(candidate => candidate.id === sourceId);
+        if (matches.length === 1) {
+            moverElementDataIds.set(element, sourceId);
+            return sourceId;
+        }
+    }
+
+    const path = getMoverElementPath(element, root);
+    const existingIds = new Set(
+        Array.from(root.querySelectorAll("[id]"))
+            .map(candidate => candidate.id)
+    );
+    let key = `__mover_${path}`;
+    while (existingIds.has(key)) {
+        key = `_${key}`;
+    }
+    moverElementDataIds.set(element, key);
+    return key;
+}
+
+function addGeneratedElementKeyInfo(info, elements) {
+    const generated = {};
+    elements.forEach(element => {
+        const key = getMoverElementDataId(element);
+        if (key !== element.id) {
+            generated[key] = {
+                sourceId: element.id || null,
+                path: getMoverElementPath(element),
+                tag: element.tagName.toLowerCase(),
+            };
+        }
+    });
+    if (Object.keys(generated).length > 0) {
+        info["generated-element-keys"] = generated;
+    }
+    return info;
+}
+
 function getAllAnimatedElements(svgRef) {
-    let svgChildren = svgRef.children
+    const svgChildren = svgRef.querySelectorAll("*")
     let res = []
     for (let i = 0; i < svgChildren.length; i++) {
         let child = svgChildren[i]
@@ -406,6 +536,18 @@ function assertPreparedTimelineStable() {
     return true;
 }
 
+function hasCallbackCreatedStructure(timeline) {
+    return timeline
+        .getChildren(true, true, true)
+        .some(animation => isGsapDelayedCall(animation));
+}
+
+function recordPreparedTimelineState() {
+    moverPreparedAnimations = getControlledAnimationSet();
+    moverPreparedControlDuration = tl_to_use.totalDuration();
+    moverControlPrepared = true;
+}
+
 function prepareTimelineForCapture() {
     if (moverControlPrepared) {
         assertNoLateRootAnimations();
@@ -413,10 +555,19 @@ function prepareTimelineForCapture() {
         return getAnimationInfo();
     }
 
+    assertNoLateRootAnimations();
+    if (!hasCallbackCreatedStructure(tl_to_use)) {
+        const info = getAnimationInfo();
+        recordPreparedTimelineState();
+        assertPreparedTimelineStable();
+        return info;
+    }
+
+    // Compatibility path for idempotent timeline.call() builders. Ordinary
+    // timelines must not traverse end state before deterministic capture.
     const originalState = captureGsapAnimationState(tl_to_use);
     let preparedSuccessfully = false;
     try {
-        assertNoLateRootAnimations();
         const initialInfo = getAnimationInfo();
         seekControlledTimeline(initialInfo.animDuration);
         seekControlledTimeline(0);
@@ -442,9 +593,7 @@ function prepareTimelineForCapture() {
             );
         }
 
-        moverPreparedAnimations = secondSettledAnimations;
-        moverPreparedControlDuration = tl_to_use.totalDuration();
-        moverControlPrepared = true;
+        recordPreparedTimelineState();
         preparedSuccessfully = true;
         return finalInfo;
     } finally {
@@ -1152,10 +1301,11 @@ function resetSeekAndAppend() {
 function convertToKeyframes(allElems) {
     let res = { "info": {} }
     res["info"]["scene-size"] = getSvgSceneSize()
+    addGeneratedElementKeyInfo(res["info"], allElems)
 
     for (let j = 0; j < allElems.length; j++) {
         let elem = allElems[j]
-        let elemName = elem.id
+        let elemName = getMoverElementDataId(elem)
         res[elemName] = {}
     }
 
@@ -1231,22 +1381,27 @@ function convertToKeyframes(allElems) {
                     }
                 })
             }
-            res[elem.id] = elementData
+            res[getMoverElementDataId(elem)] = elementData
         }
     }
     return res
 }
 
-function getAllTransformationValues(animatedElems, fps = 60) {
+function getAllTransformationValues(
+    animatedElems,
+    fps = 60,
+    frameObserver = null,
+) {
     const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
 
     let res = {}
     res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
     res["info"]["scene-size"] = getSvgSceneSize()
+    addGeneratedElementKeyInfo(res["info"], animatedElems)
 
     for (let j = 0; j < animatedElems.length; j++) {
         let elem = animatedElems[j]
-        let elemName = elem.id
+        let elemName = getMoverElementDataId(elem)
         res[elemName] = {}
     }
 
@@ -1264,17 +1419,18 @@ function getAllTransformationValues(animatedElems, fps = 60) {
             let tween_info = { "type": tween_type, "duration": tween_duration, "start": tween_start, "end": tween_end }
             tweens_info.push(tween_info)
         })
-        res[elem.id]["tweens"] = tweens_info
+        res[getMoverElementDataId(elem)]["tweens"] = tweens_info
     }
 
     for (let i = 0; i < steps + 1; i++) {
-        seekControlledTimeline(getSeekTime(i, sampleFps, animDuration))
+        const time = getSeekTime(i, sampleFps, animDuration)
+        seekControlledTimeline(time)
 
         for (let j = 0; j < animatedElems.length; j++) {
             let elem = animatedElems[j]
             let ctm = SVGMatrixToPy(elem.getCTM())
 
-            let elemName = elem.id
+            let elemName = getMoverElementDataId(elem)
             let currElemData = res[elemName]
 
             currElemData["transformedPts"] = currElemData["transformedPts"] || [];
@@ -1309,6 +1465,9 @@ function getAllTransformationValues(animatedElems, fps = 60) {
             currElemData["origin"].push(analyzedResult["origin"]);
             currElemData["wldOrigin"] = currElemData["wldOrigin"] || [];
             currElemData["wldOrigin"].push(analyzedResult["wldOrigin"]);
+        }
+        if (typeof frameObserver === "function") {
+            frameObserver(i, time);
         }
     }
 
@@ -1430,8 +1589,12 @@ function createObjectList(animatedElems, non_animatedElems) {
     let elems = animatedElems.concat(non_animatedElems)
     let objectData = []
     for (var elem of elems) {
-        elem_data = {}
-        elem_data["id"] = elem.id
+        const elem_data = {}
+        const elementDataId = getMoverElementDataId(elem)
+        elem_data["id"] = elementDataId
+        if (elementDataId !== elem.id) {
+            elem_data["sourceId"] = elem.id || null
+        }
 
         if (elem.id.includes("ignore")) {
             continue
@@ -1498,9 +1661,9 @@ function SVGMatrixToPy(matrix) {
 
 
 function getAABB(element) {
-    rect = element.getBoundingClientRect()
-    svgOffset = svgRef.getBoundingClientRect()
-    py_rect = {
+    const rect = element.getBoundingClientRect()
+    const svgOffset = svgRef.getBoundingClientRect()
+    const py_rect = {
         'top': rect.top - svgOffset.y,
         'left': rect.left - svgOffset.x,
         'bottom': rect.bottom - svgOffset.y,
@@ -1515,9 +1678,9 @@ function getAABB(element) {
 
 
 function getTransformedAABB(element) {
-    matrix = element.getCTM()
-    bb = element.getBBox()
-    tpts = [
+    const matrix = element.getCTM()
+    const bb = element.getBBox()
+    const tpts = [
         matrix_XY(matrix, bb.x, bb.y),
         matrix_XY(matrix, bb.x + bb.width, bb.y),
         matrix_XY(matrix, bb.x + bb.width, bb.y + bb.height),
@@ -1638,7 +1801,7 @@ function extractAnimatedProperties(svgRef, registry) {
     const spatialNames = new Set(Object.keys(registry.spatial));
 
     const result = {};
-    const svgChildren = svgRef.children;
+    const svgChildren = svgRef.querySelectorAll("*");
     for (let i = 0; i < svgChildren.length; i++) {
         const child = svgChildren[i];
         if (!isGraphicalElement(child)) continue;
@@ -1671,77 +1834,95 @@ function extractAnimatedProperties(svgRef, registry) {
                 regNames.add("transformedPts");
             }
         }
-        result[child.id] = [...regNames];
+        result[getMoverElementDataId(child)] = [...regNames];
     }
     return result;
 }
 
+
+function resolveComparisonPropertyConfig(registry, propertyConfig = null) {
+    // null propertyConfig → use registry.defaults
+    const config = propertyConfig || {
+        spatial: registry.defaults.spatial,
+        visual: registry.defaults.visual,
+        svgAttributes: []
+    };
+    return config;
+}
+
+function initializeRenderedData(allElems, registry, propertyConfig, fps) {
+    const config = resolveComparisonPropertyConfig(
+        registry,
+        propertyConfig,
+    );
+    const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
+    let res = {}
+    res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
+    res["info"]["scene-size"] = getSvgSceneSize()
+    addGeneratedElementKeyInfo(res["info"], allElems)
+
+    for (let j = 0; j < allElems.length; j++) {
+        let elem = allElems[j]
+        let elemName = getMoverElementDataId(elem)
+        res[elemName] = {}
+    }
+    res["info"]["propertyConfig"] = config;
+    return res;
+}
+
+function recordRenderedDataFrame(res, allElems, registry) {
+    const config = res["info"]["propertyConfig"];
+    const visualProps = config.visual || [];
+    for (let j = 0; j < allElems.length; j++) {
+        let elem = allElems[j]
+        let elemName = getMoverElementDataId(elem)
+        let currElemData = res[elemName]
+
+        // Spatial properties — use getter recipe from registry
+        for (const prop of (config.spatial || [])) {
+            const propSpec = registry.spatial[prop];
+            if (!propSpec) {
+                console.warn(`Unknown spatial property: ${prop}`);
+                continue;
+            }
+            currElemData[prop] = currElemData[prop] || [];
+            currElemData[prop].push(getSpatialValue(elem, propSpec));
+        }
+
+        // Visual (CSS computed style) — each property gets its own array
+        if (visualProps.length > 0) {
+            const style = window.getComputedStyle(elem);
+            for (const prop of visualProps) {
+                currElemData[prop] = currElemData[prop] || [];
+                currElemData[prop].push(style[prop]);
+            }
+        }
+
+        // SVG attributes — generic, no per-property logic
+        for (const attr of (config.svgAttributes || [])) {
+            currElemData[attr] = currElemData[attr] || [];
+            currElemData[attr].push(elem.getAttribute(attr));
+        }
+    }
+    return res;
+}
 
 function createRenderedData(allElems, registry, propertyConfig = null, fps = 60) {
     // registry = property_registry.json (auto-loaded by Python)
     // propertyConfig = { spatial: ["transformedPts", "rotate", ...],
     //                    visual: ["fill", "opacity", ...],
     //                    svgAttributes: ["d", "r"] }
-    // null propertyConfig → use registry.defaults
-
-    const config = propertyConfig || {
-        spatial: registry.defaults.spatial,
-        visual: registry.defaults.visual,
-        svgAttributes: []
-    };
-    const visualProps = config.visual || [];
-
-    const { animDuration, fps: sampleFps, steps } = getAnimationInfo(fps);
-
-    let res = {}
-    res["info"] = { "duration": animDuration, "fps": sampleFps, "steps": steps }
-    res["info"]["scene-size"] = getSvgSceneSize()
-
-    for (let j = 0; j < allElems.length; j++) {
-        let elem = allElems[j]
-        let elemName = elem.id
-        res[elemName] = {}
-    }
-
-    // Get comparison properties at each timestep
+    const res = initializeRenderedData(
+        allElems,
+        registry,
+        propertyConfig,
+        fps,
+    );
+    const { duration, fps: sampleFps, steps } = res["info"];
     for (let i = 0; i < steps + 1; i++) {
-        seekToTime(getSeekTime(i, sampleFps, animDuration))
-
-        for (let j = 0; j < allElems.length; j++) {
-            let elem = allElems[j]
-            let elemName = elem.id
-            let currElemData = res[elemName]
-
-            // Spatial properties — use getter recipe from registry
-            for (const prop of (config.spatial || [])) {
-                const propSpec = registry.spatial[prop];
-                if (!propSpec) {
-                    console.warn(`Unknown spatial property: ${prop}`);
-                    continue;
-                }
-                currElemData[prop] = currElemData[prop] || [];
-                currElemData[prop].push(getSpatialValue(elem, propSpec));
-            }
-
-            // Visual (CSS computed style) — each property gets its own array
-            if (visualProps.length > 0) {
-                const style = window.getComputedStyle(elem);
-                for (const prop of visualProps) {
-                    currElemData[prop] = currElemData[prop] || [];
-                    currElemData[prop].push(style[prop]);
-                }
-            }
-
-            // SVG attributes — generic, no per-property logic
-            for (const attr of (config.svgAttributes || [])) {
-                currElemData[attr] = currElemData[attr] || [];
-                currElemData[attr].push(elem.getAttribute(attr));
-            }
-        }
+        seekToTime(getSeekTime(i, sampleFps, duration))
+        recordRenderedDataFrame(res, allElems, registry);
     }
-
-    // Store config in info for downstream consumers
-    res["info"]["propertyConfig"] = config;
 
     // Reset timeline to start
     seekControlledTimeline(0);
@@ -1759,7 +1940,27 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
     }
     let nonAnimatedElems = getNonAnimatedElements(svgRef);
     let allElems = [...animatedElems, ...nonAnimatedElems];
-    let animData = getAllTransformationValues(allElems, fps);
+    let renderedData = null;
+    if (saveForComparison) {
+        renderedData = initializeRenderedData(
+            allElems,
+            registry,
+            comparisonPropertyConfig,
+            fps,
+        );
+    }
+    const renderedFrameObserver = renderedData
+        ? () => recordRenderedDataFrame(
+            renderedData,
+            allElems,
+            registry,
+        )
+        : null;
+    let animData = getAllTransformationValues(
+        allElems,
+        fps,
+        renderedFrameObserver,
+    );
     let objectData = createObjectList(animatedElems, nonAnimatedElems)
     animData["info"]["objects"] = objectData
     console.log("port: ", port)
@@ -1785,7 +1986,6 @@ async function convert(port=8001, disableEasing=false, saveKeyframes=false, save
     }
 
     if (saveForComparison) {
-        let renderedData = createRenderedData(allElems, registry, comparisonPropertyConfig, fps);
         const response_rendered = await fetch(`http://localhost:${port}/convert-js-to-rendered-json`, {
             method: 'POST',
             headers: {
@@ -1871,7 +2071,7 @@ var ntc = {
         var r = rgb[0], g = rgb[1], b = rgb[2];
         var hsl = ntc.hsl(color);
         var h = hsl[0], s = hsl[1], l = hsl[2];
-        var ndf1 = 0; ndf2 = 0; ndf = 0;
+        var ndf1 = 0, ndf2 = 0, ndf = 0;
         var cl = -1, df = -1;
 
         for (var i = 0; i < ntc.names.length; i++) {

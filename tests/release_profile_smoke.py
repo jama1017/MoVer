@@ -47,8 +47,8 @@ def check_common(repo_root: Path) -> dict[str, object]:
         f"MoVer imported from source checkout: {package_root}",
     )
     require(
-        importlib.metadata.version("mover") == "0.3.0",
-        "Installed distribution is not mover 0.3.0",
+        importlib.metadata.version("mover") == "0.3.1",
+        "Installed distribution is not mover 0.3.1",
     )
 
     converter_assets = resources.files("mover.converter").joinpath("assets")

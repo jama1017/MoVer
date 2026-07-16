@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mover"
-version = "0.3.0"
+version = "0.3.1"
 description = "Official implementation of MoVer: Motion Verification for Motion Graphics Animations"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"

@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -28,6 +29,11 @@ CONVERT_JS = (
     / "convert.js"
 )
 GSAP_JS = CONVERT_JS.parent / "gsap.min.js"
+PROPERTY_REGISTRY = json.loads(
+    (CONVERT_JS.parent / "property_registry.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
@@ -87,6 +93,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 <script>
                     window.tl_to_use = {
                         seekCalls: [],
+                        totalTimeCalls: [],
                         currentTotalTime: 1,
                         isPaused: true,
                         seek(time) {
@@ -114,9 +121,12 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                             this.isPaused = value;
                             return this;
                         },
-                        totalTime(value) {
+                        totalTime(value, suppressEvents) {
                             if (arguments.length === 0) {
                                 return this.currentTotalTime;
+                            }
+                            if (suppressEvents === false) {
+                                this.totalTimeCalls.push(value);
                             }
                             this.currentTotalTime = value;
                             this.renderedTime = value;
@@ -174,6 +184,64 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             await self.page.locator("body > [data-mover-batch-frame]").count(),
             0,
+        )
+
+    async def test_conversion_helpers_do_not_assign_page_globals(self) -> None:
+        await self.page.add_script_tag(
+            content="""
+                const elem_data = "page-elem-data";
+                const rect = "page-rect";
+                const svgOffset = "page-svg-offset";
+                const py_rect = "page-py-rect";
+                const matrix = "page-matrix";
+                const bb = "page-bb";
+                const tpts = "page-tpts";
+                const ndf2 = "page-ndf2";
+                const ndf = "page-ndf";
+            """
+        )
+
+        result = await self.page.evaluate(
+            """() => {
+                const shape = document.querySelector("#shape");
+                shape.setAttribute("fill", "#ffffff");
+                return {
+                    aabb: getAABB(shape),
+                    transformedAabb: getTransformedAABB(shape),
+                    objectData: createObjectList([shape], [])[0],
+                    sentinels: {
+                        elem_data,
+                        rect,
+                        svgOffset,
+                        py_rect,
+                        matrix,
+                        bb,
+                        tpts,
+                        ndf2,
+                        ndf,
+                    },
+                };
+            }"""
+        )
+
+        self.assertEqual(result["aabb"]["width"], 6)
+        self.assertEqual(result["aabb"]["height"], 6)
+        self.assertEqual(len(result["transformedAabb"]), 4)
+        self.assertEqual(result["objectData"]["shape"], "circle")
+        self.assertEqual(result["objectData"]["fill"], "white")
+        self.assertEqual(
+            result["sentinels"],
+            {
+                "elem_data": "page-elem-data",
+                "rect": "page-rect",
+                "svgOffset": "page-svg-offset",
+                "py_rect": "page-py-rect",
+                "matrix": "page-matrix",
+                "bb": "page-bb",
+                "tpts": "page-tpts",
+                "ndf2": "page-ndf2",
+                "ndf": "page-ndf",
+            },
         )
 
     async def test_frame_sizes_grid_control_ids_and_reset(self) -> None:
@@ -323,12 +391,12 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     fps: 2,
                     steps: 2,
                 });
-                tl_to_use.seekCalls = [];
+                tl_to_use.totalTimeCalls = [];
             }"""
         )
         self.assertEqual(await self.page.evaluate("seekAndAppendToDom()"), 3)
         self.assertEqual(
-            await self.page.evaluate("tl_to_use.seekCalls"),
+            await self.page.evaluate("tl_to_use.totalTimeCalls"),
             [0, 0.5, 1],
         )
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
@@ -341,12 +409,12 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     fps: 60,
                     steps: 0,
                 });
-                tl_to_use.seekCalls = [];
+                tl_to_use.totalTimeCalls = [];
             }"""
         )
         self.assertEqual(await self.page.evaluate("seekAndAppendToDom()"), 1)
         self.assertEqual(
-            await self.page.evaluate("tl_to_use.seekCalls"),
+            await self.page.evaluate("tl_to_use.totalTimeCalls"),
             [0],
         )
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
@@ -744,8 +812,15 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
         await self.page.evaluate(
             """() => {
-                window.tl_to_use.seek = time => {
-                    if (time > 0) throw new Error("injected failure");
+                const originalTotalTime = window.tl_to_use.totalTime;
+                window.tl_to_use.totalTime = function(time, suppressEvents) {
+                    if (arguments.length === 0) {
+                        return originalTotalTime.call(this);
+                    }
+                    if (suppressEvents === false && time > 0) {
+                        throw new Error("injected failure");
+                    }
+                    return originalTotalTime.call(this, time, suppressEvents);
                 };
             }"""
         )
@@ -892,6 +967,246 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rendered["samples"], ["0", "50", "100"])
         self.assertEqual(rendered["finalAttribute"], "0")
         self.assertGreaterEqual(rendered["updateCount"], 4)
+
+    async def test_main_data_transform_sequences_match_direct_geometry(
+        self,
+    ) -> None:
+        await self.page.add_script_tag(path=str(GSAP_JS))
+        result = await self.page.evaluate(
+            """() => {
+                const shape = document.querySelector("#shape");
+                window.tl_to_use = gsap.timeline({paused: true});
+                tl_to_use.to(shape, {
+                    x: 10,
+                    y: 20,
+                    rotation: 90,
+                    scaleX: 2,
+                    scaleY: 0.5,
+                    skewX: 10,
+                    transformOrigin: "10px 10px",
+                    duration: 1,
+                    ease: "none",
+                });
+                const direct = [];
+                for (const time of [0, 0.5, 1]) {
+                    tl_to_use.totalTime(time, false).pause();
+                    const matrix = shape.getCTM();
+                    const box = shape.getBBox();
+                    const point = (x, y) => [
+                        x * matrix.a + y * matrix.c + matrix.e,
+                        x * matrix.b + y * matrix.d + matrix.f,
+                    ];
+                    direct.push({
+                        CTM: [
+                            [matrix.a, matrix.c, matrix.e],
+                            [matrix.b, matrix.d, matrix.f],
+                            [0, 0, 1],
+                        ],
+                        transformedPts: [
+                            point(box.x, box.y),
+                            point(box.x + box.width, box.y),
+                            point(
+                                box.x + box.width,
+                                box.y + box.height,
+                            ),
+                            point(box.x, box.y + box.height),
+                        ],
+                    });
+                }
+                tl_to_use.totalTime(0, false).pause();
+                return {
+                    data: getAllTransformationValues([shape], 2),
+                    direct,
+                };
+            }"""
+        )
+
+        data = result["data"]
+        shape = data["shape"]
+        self.assertEqual(
+            data["info"],
+            {
+                "duration": 1,
+                "fps": 2,
+                "steps": 2,
+                "scene-size": {"width": 20, "height": 20},
+            },
+        )
+        expected_accumulated = {
+            "translateX_acc": [0, 5, 10],
+            "translateY_acc": [0, -10, -20],
+            "rotate_acc": [0, 45, 90],
+            "scaleX_acc": [1, 1.5, 2],
+            "scaleY_acc": [1, 0.75, 0.5],
+            "skewX_acc": [0, 5, 10],
+            "skewY_acc": [0, 0, 0],
+        }
+        for name, expected in expected_accumulated.items():
+            for actual, expected_value in zip(shape[name], expected):
+                self.assertAlmostEqual(actual, expected_value, places=5)
+        self.assertEqual(shape["transformTypes"], ["", "TRSK", "TRSK"])
+        self.assertEqual(len(shape["tweens"]), 1)
+        self.assertEqual(shape["tweens"][0]["start"], 0)
+        self.assertEqual(shape["tweens"][0]["end"], 2)
+        for frame_index, direct in enumerate(result["direct"]):
+            for actual_row, expected_row in zip(
+                shape["CTM"][frame_index],
+                direct["CTM"],
+            ):
+                for actual, expected in zip(actual_row, expected_row):
+                    self.assertAlmostEqual(actual, expected, places=5)
+            for actual_point, expected_point in zip(
+                shape["transformedPts"][frame_index],
+                direct["transformedPts"],
+            ):
+                for actual, expected in zip(actual_point, expected_point):
+                    self.assertAlmostEqual(actual, expected, places=5)
+
+    async def test_animated_property_discovery_resolves_aliases_and_attrs(
+        self,
+    ) -> None:
+        await self.page.add_script_tag(path=str(GSAP_JS))
+        properties = await self.page.evaluate(
+            """registry => {
+                const source = document.querySelector("#source");
+                const shape = document.querySelector("#shape");
+                const namespace = "http://www.w3.org/2000/svg";
+                const nestedGroup = document.createElementNS(namespace, "g");
+                nestedGroup.id = "nested-group";
+                const nestedShape = document.createElementNS(
+                    namespace,
+                    "circle",
+                );
+                nestedShape.id = "nested-shape";
+                nestedShape.setAttribute("cx", "5");
+                nestedShape.setAttribute("cy", "5");
+                nestedShape.setAttribute("r", "2");
+                nestedGroup.appendChild(nestedShape);
+                source.appendChild(nestedGroup);
+                window.tl_to_use = gsap.timeline({paused: true});
+                tl_to_use.set(shape, {fill: "red"}, 0);
+                tl_to_use.set(nestedShape, {fill: "blue"}, 0);
+                tl_to_use.to(shape, {
+                    x: 10,
+                    y: 20,
+                    rotation: 30,
+                    scale: 2,
+                    autoAlpha: 0.5,
+                    attr: {r: 4, cx: 12},
+                    duration: 1,
+                    ease: "none",
+                });
+                tl_to_use.to(nestedShape, {
+                    x: 10,
+                    y: 20,
+                    rotation: 30,
+                    scale: 2,
+                    autoAlpha: 0.5,
+                    attr: {r: 4, cx: 12},
+                    duration: 1,
+                    ease: "none",
+                }, 0);
+                return {
+                    animatedIds: getAllAnimatedElements(source).map(
+                        element => element.id
+                    ),
+                    properties: extractAnimatedProperties(source, registry),
+                };
+            }""",
+            PROPERTY_REGISTRY,
+        )
+
+        expected = {
+            "cx",
+            "fill",
+            "opacity",
+            "r",
+            "rotate",
+            "scaleX",
+            "scaleY",
+            "transformedPts",
+            "translateX",
+            "translateY",
+            "visibility",
+        }
+        self.assertEqual(
+            set(properties["animatedIds"]),
+            {"shape", "nested-shape"},
+        )
+        properties = properties["properties"]
+        self.assertEqual(set(properties), {"shape", "nested-shape"})
+        self.assertEqual(set(properties["shape"]), expected)
+        self.assertEqual(set(properties["nested-shape"]), expected)
+
+    async def test_anonymous_animated_elements_get_unique_json_keys(
+        self,
+    ) -> None:
+        await self.page.add_script_tag(path=str(GSAP_JS))
+        result = await self.page.evaluate(
+            """registry => {
+                const namespace = "http://www.w3.org/2000/svg";
+                const source = document.querySelector("#source");
+                const group = document.createElementNS(namespace, "g");
+                const first = document.createElementNS(namespace, "circle");
+                const second = document.createElementNS(namespace, "circle");
+                [first, second].forEach((element, index) => {
+                    element.setAttribute("cx", String(4 + index * 8));
+                    element.setAttribute("cy", "4");
+                    element.setAttribute("r", "2");
+                    group.appendChild(element);
+                });
+                source.appendChild(group);
+                window.tl_to_use = gsap.timeline({paused: true});
+                tl_to_use.to(
+                    [first, second],
+                    {x: 10, duration: 1, ease: "none"}
+                );
+                const elements = getAllAnimatedElements(source);
+                const config = {
+                    spatial: ["transformedPts", "translateX"],
+                    visual: [],
+                    svgAttributes: [],
+                };
+                const data = createRenderedData(
+                    elements,
+                    registry,
+                    config,
+                    2,
+                );
+                const properties = extractAnimatedProperties(
+                    source,
+                    registry,
+                );
+                return {
+                    data,
+                    keys: elements.map(
+                        element => getMoverElementDataId(element)
+                    ),
+                    properties,
+                };
+            }""",
+            PROPERTY_REGISTRY,
+        )
+
+        keys = result["keys"]
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(len(set(keys)), 2)
+        self.assertTrue(all(key.startswith("__mover_") for key in keys))
+        self.assertEqual(set(result["properties"]), set(keys))
+        self.assertEqual(
+            set(result["data"]["info"]["generated-element-keys"]),
+            set(keys),
+        )
+        for key in keys:
+            self.assertEqual(len(result["data"][key]["translateX"]), 3)
+            self.assertEqual(
+                result["data"][key]["translateX"],
+                [0, 5, 10],
+            )
+            self.assertEqual(
+                set(result["properties"][key]),
+                {"transformedPts", "translateX"},
+            )
 
     async def test_server_capture_restores_page_state_after_success_and_failure(
         self,
