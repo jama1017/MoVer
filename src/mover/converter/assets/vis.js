@@ -41,7 +41,7 @@ let moverVisualizationPlaybackToken = 0;
 let frameCount = document.createElement("p");
 let frameNum = 0;
 frameCount.textContent = `frame: 0 / ${totalSteps}`;
-document.getElementById("prompt").after(frameCount);
+document.getElementById("prompt")?.after(frameCount);
 
 function refreshTimelineVisualization() {
     if (!tl_to_use) return false

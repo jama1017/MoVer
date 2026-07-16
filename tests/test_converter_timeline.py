@@ -137,6 +137,51 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         )
         return page
 
+    async def test_missing_prompt_loads_without_error_and_preserves_frames(
+        self,
+    ) -> None:
+        page = await self.browser.new_page()
+        page_errors = []
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        await page.set_content(
+            BASE_DOCUMENT.replace('<p id="prompt">Timeline test</p>', "")
+        )
+        await page.add_script_tag(path=str(GSAP_JS))
+        await page.add_script_tag(
+            content="\n".join(
+                (
+                    """
+                    const promptlessAnimation = gsap.timeline();
+                    promptlessAnimation.to(
+                        "#selected",
+                        {attr: {x: 25}, duration: 1, ease: "none"}
+                    );
+                    """,
+                    VIS_SOURCE,
+                    CONVERT_SOURCE,
+                )
+            )
+        )
+
+        result = await page.evaluate(
+            """() => {
+                const selection = initializeTimelineControl();
+                const frameCount = seekAndAppendToDomUsingTimes([0, 0.5, 1]);
+                const frameXs = Array.from(document.querySelectorAll(
+                    "body > [data-mover-batch-frame] #selected"
+                )).map(element => Number(element.getAttribute("x")));
+                const reset = resetSeekAndAppend();
+                return {selection, frameCount, frameXs, reset};
+            }"""
+        )
+
+        self.assertEqual(page_errors, [])
+        self.assertEqual(result["selection"]["source"], "exported-root")
+        self.assertEqual(result["selection"]["duration"], 1)
+        self.assertEqual(result["frameCount"], 3)
+        self.assertEqual(result["frameXs"], [5, 15, 25])
+        self.assertTrue(result["reset"])
+
     async def test_prepaused_tl_and_active_sibling_are_both_controlled(self) -> None:
         page = await self._load_page(
             """

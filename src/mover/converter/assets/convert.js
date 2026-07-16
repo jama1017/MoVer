@@ -1589,7 +1589,7 @@ function createObjectList(animatedElems, non_animatedElems) {
     let elems = animatedElems.concat(non_animatedElems)
     let objectData = []
     for (var elem of elems) {
-        elem_data = {}
+        const elem_data = {}
         const elementDataId = getMoverElementDataId(elem)
         elem_data["id"] = elementDataId
         if (elementDataId !== elem.id) {
@@ -1661,9 +1661,9 @@ function SVGMatrixToPy(matrix) {
 
 
 function getAABB(element) {
-    rect = element.getBoundingClientRect()
-    svgOffset = svgRef.getBoundingClientRect()
-    py_rect = {
+    const rect = element.getBoundingClientRect()
+    const svgOffset = svgRef.getBoundingClientRect()
+    const py_rect = {
         'top': rect.top - svgOffset.y,
         'left': rect.left - svgOffset.x,
         'bottom': rect.bottom - svgOffset.y,
@@ -1678,9 +1678,9 @@ function getAABB(element) {
 
 
 function getTransformedAABB(element) {
-    matrix = element.getCTM()
-    bb = element.getBBox()
-    tpts = [
+    const matrix = element.getCTM()
+    const bb = element.getBBox()
+    const tpts = [
         matrix_XY(matrix, bb.x, bb.y),
         matrix_XY(matrix, bb.x + bb.width, bb.y),
         matrix_XY(matrix, bb.x + bb.width, bb.y + bb.height),
@@ -2071,7 +2071,7 @@ var ntc = {
         var r = rgb[0], g = rgb[1], b = rgb[2];
         var hsl = ntc.hsl(color);
         var h = hsl[0], s = hsl[1], l = hsl[2];
-        var ndf1 = 0; ndf2 = 0; ndf = 0;
+        var ndf1 = 0, ndf2 = 0, ndf = 0;
         var cl = -1, df = -1;
 
         for (var i = 0; i < ntc.names.length; i++) {

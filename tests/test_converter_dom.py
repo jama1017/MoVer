@@ -186,6 +186,64 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             0,
         )
 
+    async def test_conversion_helpers_do_not_assign_page_globals(self) -> None:
+        await self.page.add_script_tag(
+            content="""
+                const elem_data = "page-elem-data";
+                const rect = "page-rect";
+                const svgOffset = "page-svg-offset";
+                const py_rect = "page-py-rect";
+                const matrix = "page-matrix";
+                const bb = "page-bb";
+                const tpts = "page-tpts";
+                const ndf2 = "page-ndf2";
+                const ndf = "page-ndf";
+            """
+        )
+
+        result = await self.page.evaluate(
+            """() => {
+                const shape = document.querySelector("#shape");
+                shape.setAttribute("fill", "#ffffff");
+                return {
+                    aabb: getAABB(shape),
+                    transformedAabb: getTransformedAABB(shape),
+                    objectData: createObjectList([shape], [])[0],
+                    sentinels: {
+                        elem_data,
+                        rect,
+                        svgOffset,
+                        py_rect,
+                        matrix,
+                        bb,
+                        tpts,
+                        ndf2,
+                        ndf,
+                    },
+                };
+            }"""
+        )
+
+        self.assertEqual(result["aabb"]["width"], 6)
+        self.assertEqual(result["aabb"]["height"], 6)
+        self.assertEqual(len(result["transformedAabb"]), 4)
+        self.assertEqual(result["objectData"]["shape"], "circle")
+        self.assertEqual(result["objectData"]["fill"], "white")
+        self.assertEqual(
+            result["sentinels"],
+            {
+                "elem_data": "page-elem-data",
+                "rect": "page-rect",
+                "svgOffset": "page-svg-offset",
+                "py_rect": "page-py-rect",
+                "matrix": "page-matrix",
+                "bb": "page-bb",
+                "tpts": "page-tpts",
+                "ndf2": "page-ndf2",
+                "ndf": "page-ndf",
+            },
+        )
+
     async def test_frame_sizes_grid_control_ids_and_reset(self) -> None:
         await self.page.set_viewport_size({"width": 128, "height": 256})
         expected_default_state = await self._snapshot_original_state()
