@@ -28,7 +28,6 @@ We provide scripts to generate your own dataset of prompts with MoVer. See [`mov
 
 
 ## Installation
-MoVer 0.2 supports Python 3.10–3.12.
 
 ### Full pipeline installation
 
@@ -156,55 +155,6 @@ To understand how MoVer's LLM-based animation synthesizer generates SVG animatio
 - Each SVG animation is saved as an HTML file (see `examples/`). To properly render the HTML file, first get all the files in `src/mover/converter/assets/` and put them in the same directory as the HTML file. Then open the HTML file in your browser to see the animation in action.
 - With `--create-video`, the converter can render animation outputs with `--format mp4`, `--format gif`, `--format png`, or `--format svg`. PNG and SVG formats write per-frame files, and `--video-fps` controls both output frame sampling and JSON sampling.
 
-### Converter
-
-Install the Chromium version matched to Playwright:
-
-```bash
-python -m playwright install chromium
-```
-
-Convert an animation using an available local port:
-
-```bash
-mover-convert animation.html 0 \
-  --output-dir output \
-  --save-keyframes \
-  --save-for-comparison \
-  --save-animated-properties
-```
-
-Port `0` asks the operating system to select an available local port. The
-original `python -m mover.converter.mover_converter` invocation remains
-supported.
-
-Add `--create-video --format mp4`, `gif`, `png`, or `svg` to create media or
-per-frame output. The default is 60 FPS; `--video-fps` controls JSON sampling
-and rendered output sampling together.
-
-The converter writes:
-
-- `<stem>_data.json`
-- Optional `<stem>_data_keyframes.json`, `<stem>_data_rendered.json`, and
-  `<stem>_properties.json`
-- `<stem>_animation.mp4` or `<stem>_animation.gif`
-- `<stem>_animation_<fps>_png/` or `<stem>_animation_<fps>_svg/`
-
-The Python capture API also supports in-memory PNG frames as normalized NumPy
-arrays and in-memory SVG frames as text streams. Repeated capture restores the
-page’s capture state between runs.
-
-MoVer automatically controls every GSAP root animation present when conversion
-starts, including legacy `tl`, renamed or sibling timelines, and standalone
-tweens. No timeline name or registration hook is required. Use
-`capture_duration=<seconds>` or `--capture-duration <seconds>` for infinitely
-repeating animations.
-
-GIF output requires a working FFmpeg installation. MP4 uses FFmpeg when
-available and otherwise uses the validated OpenCV fallback from `mover[media]`
-or `mover[full]`. When the converter serves an HTML file, relative converter
-assets come from the installed MoVer package.
-
 ### MoVer DSL
 The MoVer DSL is designed with predicates corresponding to spatial-temporal concepts that people commonly use in natural language to describe motions. For example, for the following animation prompt:
 > Translate the black square upwards by 100 px
@@ -238,6 +188,39 @@ m_4 = iota(Motion, lambda m: type(m, "translate") and direction(m, [0.0, 1.0]) a
 t_before(m_1, m_2)
 t_after(m_3, m_2)
 ```
+
+
+### Converter
+
+Use `mover-convert` to convert a GSAP animation HTML file into sampled JSON data
+and optionally per-frame or video outputs.
+
+```bash
+mover-convert <input_animation.html> <port number>
+```
+
+- `<port number>`: Use `0` to automatically select an available local port, or
+  provide a specific port number.
+- `--output-dir <directory>`: Write generated files to this directory. The
+  default is the directory containing the input HTML file.
+- `--create-video`: Create an MP4, GIF, PNG sequence, or SVG sequence in
+  addition to JSON data.
+- `--format <mp4|gif|png|svg>`: Select the animation output format. The default
+  is `mp4`.
+- `--video-fps <fps>`: Set the frame rate used for animation and JSON sampling.
+  The default is 60 FPS.
+- `--capture-duration <seconds>`: Set a finite capture duration. This is
+  required for infinitely repeating animations.
+- `--save-keyframes`: Write `<stem>_data_keyframes.json`.
+- `--save-for-comparison`: Write `<stem>_data_rendered.json`.
+- `--save-animated-properties`: Write `<stem>_properties.json`.
+- `--comparison-properties '<json>'`: Select the spatial, visual, and SVG
+  attributes included in comparison data.
+- `--disable-easing`: Replace tween easing with linear interpolation.
+- `--print-console`: Print browser console and network messages.
+- `--hide-grid`: Hide the default SVG grid (to indicate background transparency) during raster capture.
+
+The converter always writes `<stem>_data.json`. GIF output requires a working FFmpeg installation.
 
 
 ## License
