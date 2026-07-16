@@ -87,6 +87,7 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 <script>
                     window.tl_to_use = {
                         seekCalls: [],
+                        totalTimeCalls: [],
                         currentTotalTime: 1,
                         isPaused: true,
                         seek(time) {
@@ -114,9 +115,12 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                             this.isPaused = value;
                             return this;
                         },
-                        totalTime(value) {
+                        totalTime(value, suppressEvents) {
                             if (arguments.length === 0) {
                                 return this.currentTotalTime;
+                            }
+                            if (suppressEvents === false) {
+                                this.totalTimeCalls.push(value);
                             }
                             this.currentTotalTime = value;
                             this.renderedTime = value;
@@ -323,12 +327,12 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     fps: 2,
                     steps: 2,
                 });
-                tl_to_use.seekCalls = [];
+                tl_to_use.totalTimeCalls = [];
             }"""
         )
         self.assertEqual(await self.page.evaluate("seekAndAppendToDom()"), 3)
         self.assertEqual(
-            await self.page.evaluate("tl_to_use.seekCalls"),
+            await self.page.evaluate("tl_to_use.totalTimeCalls"),
             [0, 0.5, 1],
         )
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
@@ -341,12 +345,12 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     fps: 60,
                     steps: 0,
                 });
-                tl_to_use.seekCalls = [];
+                tl_to_use.totalTimeCalls = [];
             }"""
         )
         self.assertEqual(await self.page.evaluate("seekAndAppendToDom()"), 1)
         self.assertEqual(
-            await self.page.evaluate("tl_to_use.seekCalls"),
+            await self.page.evaluate("tl_to_use.totalTimeCalls"),
             [0],
         )
         self.assertTrue(await self.page.evaluate("resetSeekAndAppend()"))
@@ -744,8 +748,15 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
         await self.page.evaluate(
             """() => {
-                window.tl_to_use.seek = time => {
-                    if (time > 0) throw new Error("injected failure");
+                const originalTotalTime = window.tl_to_use.totalTime;
+                window.tl_to_use.totalTime = function(time, suppressEvents) {
+                    if (arguments.length === 0) {
+                        return originalTotalTime.call(this);
+                    }
+                    if (suppressEvents === false && time > 0) {
+                        throw new Error("injected failure");
+                    }
+                    return originalTotalTime.call(this, time, suppressEvents);
                 };
             }"""
         )

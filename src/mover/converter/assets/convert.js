@@ -3,6 +3,8 @@ let moverCaptureDuration = null;
 let moverControlPrepared = false;
 let moverPreparedAnimations = null;
 let moverPreparedControlDuration = null;
+let moverRecordedRootTimeline = null;
+let moverRecordedRootInfo = null;
 
 function normalizeMoverCaptureDuration(value) {
     if (value === null || value === undefined) {
@@ -30,12 +32,12 @@ function setMoverCaptureDuration(value) {
 
 function isControllableGsapTimeline(animation) {
     const requiredMethods = [
-        "seek",
+        "duration",
         "pause",
+        "totalTime",
         "totalDuration",
         "getChildren",
         "getTweensOf",
-        "totalProgress",
     ];
     return Boolean(
         animation
@@ -43,31 +45,17 @@ function isControllableGsapTimeline(animation) {
     );
 }
 
-function normalizeExportedRootChildren(timeline) {
-    const children = timeline
-        .getChildren(false, true, true)
-        .filter(child => {
-            if (isImmediateRootSetupTween(child)) {
-                timeline.remove(child);
-                return false;
-            }
-            return true;
-        });
-    children.forEach(child => {
-        const delay = (
-            typeof child.delay === "function"
-        ) ? child.delay() : 0;
-        child.startTime(delay);
-    });
-
-    return resumeControlledChildren(timeline);
-}
-
 function resumeControlledChildren(timeline) {
     let resumedChildren = 0;
     timeline.getChildren(true, true, true).forEach(child => {
         if (typeof child.paused === "function" && child.paused()) {
+            const startTime = (
+                typeof child.startTime === "function"
+            ) ? child.startTime() : null;
             child.paused(false);
+            if (Number.isFinite(startTime)) {
+                child.startTime(startTime);
+            }
             resumedChildren++;
         }
     });
@@ -90,22 +78,76 @@ function isGsapDelayedCall(animation) {
     );
 }
 
-function isImmediateRootSetupTween(animation) {
-    if (
-        !animation
-        || typeof animation.duration !== "function"
-        || typeof animation.delay !== "function"
-        || typeof animation.targets !== "function"
-    ) {
-        return false;
+function getAnimationDelay(animation) {
+    if (!animation || typeof animation.delay !== "function") {
+        return 0;
     }
-    const targets = animation.targets();
-    return (
-        animation.duration() === 0
-        && animation.delay() === 0
-        && targets.length > 0
-        && targets.every(target => typeof target !== "function")
-    );
+    const delay = Number(animation.delay());
+    return Number.isFinite(delay) ? delay : 0;
+}
+
+function getInitialRootRecords(globalRoot) {
+    const snapshot = (
+        typeof moverInitialRootSnapshot !== "undefined"
+        && Array.isArray(moverInitialRootSnapshot)
+    )
+        ? moverInitialRootSnapshot
+        : globalRoot.getChildren(false, true, true);
+    return snapshot
+        .map(record => {
+            const animation = record && record.animation
+                ? record.animation
+                : record;
+            const recordedDelay = record && record.animation
+                ? Number(record.delay)
+                : getAnimationDelay(animation);
+            const recordedStart = record && record.animation
+                ? Number(record.startTime)
+                : Number(animation.startTime());
+            return {
+                animation,
+                delay: Number.isFinite(recordedDelay) ? recordedDelay : 0,
+                startTime: Number.isFinite(recordedStart) ? recordedStart : 0,
+            };
+        })
+        .filter(root => !isGsapDelayedCall(root.animation));
+}
+
+function createRecordedRootTimeline() {
+    const globalRoot = gsap.globalTimeline;
+    globalRoot.pause();
+
+    // Snapshot before creating the wrapper so it cannot collect itself.
+    const roots = getInitialRootRecords(globalRoot);
+    const commonEpoch = roots.length > 0
+        ? Math.min(...roots.map(root => root.startTime - root.delay))
+        : 0;
+    const timeline = gsap.timeline({
+        autoRemoveChildren: false,
+        paused: true,
+        smoothChildTiming: true,
+    });
+
+    // This timeline is controlled directly; it must not remain ticker-driven.
+    globalRoot.remove(timeline);
+    roots.forEach(root => {
+        timeline.add(
+            root.animation,
+            root.startTime - root.delay - commonEpoch,
+        );
+    });
+
+    return {timeline, commonEpoch, rootCount: roots.length};
+}
+
+function initializeControlledTimelineAtZero(timeline) {
+    const duration = timeline.totalDuration();
+    if (Number.isFinite(duration) && duration > 0) {
+        const epsilon = Math.min(0.000001, duration / 1000000);
+        timeline.totalTime(epsilon, false);
+    }
+    timeline.totalTime(0, false).pause();
+    return timeline;
 }
 
 function getUnexpectedRootAnimations() {
@@ -168,27 +210,44 @@ function disableGsapDevTools() {
 
 function initializeTimelineControl(captureDuration = null) {
     setMoverCaptureDuration(captureDuration);
+    if (typeof stopTimelineVisualizationPlayback === "function") {
+        stopTimelineVisualizationPlayback();
+    }
     const disabledDevTools = disableGsapDevTools();
-    gsap.globalTimeline.pause();
-    const selected = gsap.exportRoot({
-        paused: true,
-        smoothChildTiming: false,
-    }, false);
+    const recorded = (
+        moverRecordedRootTimeline
+        && tl_to_use === moverRecordedRootTimeline
+        && moverRecordedRootInfo
+    )
+        ? {
+            timeline: moverRecordedRootTimeline,
+            ...moverRecordedRootInfo,
+        }
+        : createRecordedRootTimeline();
+    const selected = recorded.timeline;
 
     if (!isControllableGsapTimeline(selected)) {
         throw new Error(
-            "Exported GSAP root is not a Timeline with the "
-            + "required seek, duration, child, and tween methods"
+            "Recorded GSAP root is not a Timeline with the "
+            + "required duration, total-time, child, and tween methods"
         );
     }
 
-    const resumedChildren = normalizeExportedRootChildren(selected);
+    const resumedChildren = resumeControlledChildren(selected);
     tl_to_use = selected;
-    tl_to_use.seek(0, false).pause();
+    moverRecordedRootTimeline = selected;
+    moverRecordedRootInfo = {
+        commonEpoch: recorded.commonEpoch,
+        rootCount: recorded.rootCount,
+    };
+    initializeControlledTimelineAtZero(tl_to_use);
     moverControlPrepared = false;
     moverPreparedAnimations = null;
     moverPreparedControlDuration = null;
     assertNoLateRootAnimations();
+    if (typeof refreshTimelineVisualization === "function") {
+        refreshTimelineVisualization();
+    }
 
     return {
         source: "exported-root",
@@ -196,6 +255,9 @@ function initializeTimelineControl(captureDuration = null) {
         childCount: tl_to_use.getChildren(true, true, true).length,
         resumedChildren,
         disabledDevTools,
+        strategy: "recorded-root",
+        rootCount: recorded.rootCount,
+        commonEpoch: recorded.commonEpoch,
     };
 }
 
@@ -209,15 +271,23 @@ function installTimelineForCapture(
         );
     }
     setMoverCaptureDuration(captureDuration);
+    if (typeof stopTimelineVisualizationPlayback === "function") {
+        stopTimelineVisualizationPlayback();
+    }
     const disabledDevTools = disableGsapDevTools();
     gsap.globalTimeline.pause();
     const resumedChildren = resumeControlledChildren(timeline);
     tl_to_use = timeline;
-    tl_to_use.seek(0, false).pause();
+    moverRecordedRootTimeline = null;
+    moverRecordedRootInfo = null;
+    initializeControlledTimelineAtZero(tl_to_use);
     moverControlPrepared = false;
     moverPreparedAnimations = null;
     moverPreparedControlDuration = null;
     assertNoLateRootAnimations();
+    if (typeof refreshTimelineVisualization === "function") {
+        refreshTimelineVisualization();
+    }
     return {
         source: "rebuild-hook",
         duration: tl_to_use.totalDuration(),
@@ -271,8 +341,7 @@ function rebuildAnimationForCapture(
 
 function seekControlledTimeline(time) {
     resumeControlledChildren(tl_to_use);
-    tl_to_use.seek(time, false);
-    tl_to_use.pause();
+    tl_to_use.totalTime(time, false).pause();
     assertNoLateRootAnimations();
     assertPreparedTimelineStable();
     return tl_to_use;
@@ -406,6 +475,18 @@ function assertPreparedTimelineStable() {
     return true;
 }
 
+function hasCallbackCreatedStructure(timeline) {
+    return timeline
+        .getChildren(true, true, true)
+        .some(animation => isGsapDelayedCall(animation));
+}
+
+function recordPreparedTimelineState() {
+    moverPreparedAnimations = getControlledAnimationSet();
+    moverPreparedControlDuration = tl_to_use.totalDuration();
+    moverControlPrepared = true;
+}
+
 function prepareTimelineForCapture() {
     if (moverControlPrepared) {
         assertNoLateRootAnimations();
@@ -413,10 +494,19 @@ function prepareTimelineForCapture() {
         return getAnimationInfo();
     }
 
+    assertNoLateRootAnimations();
+    if (!hasCallbackCreatedStructure(tl_to_use)) {
+        const info = getAnimationInfo();
+        recordPreparedTimelineState();
+        assertPreparedTimelineStable();
+        return info;
+    }
+
+    // Compatibility path for idempotent timeline.call() builders. Ordinary
+    // timelines must not traverse end state before deterministic capture.
     const originalState = captureGsapAnimationState(tl_to_use);
     let preparedSuccessfully = false;
     try {
-        assertNoLateRootAnimations();
         const initialInfo = getAnimationInfo();
         seekControlledTimeline(initialInfo.animDuration);
         seekControlledTimeline(0);
@@ -442,9 +532,7 @@ function prepareTimelineForCapture() {
             );
         }
 
-        moverPreparedAnimations = secondSettledAnimations;
-        moverPreparedControlDuration = tl_to_use.totalDuration();
-        moverControlPrepared = true;
+        recordPreparedTimelineState();
         preparedSuccessfully = true;
         return finalInfo;
     } finally {

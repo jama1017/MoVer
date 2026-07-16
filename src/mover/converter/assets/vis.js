@@ -1,7 +1,8 @@
 let tl_to_use = null
 
-// Retain every root animation that exists when MoVer initializes. A legacy
-// `tl` is treated exactly like every sibling timeline or standalone tween.
+// Freeze and snapshot authored roots before the later converter script loads.
+// Reparenting happens once in initializeTimelineControl(), where the complete
+// recorded-root policy is available.
 if (
     typeof GSDevTools !== "undefined"
     && typeof GSDevTools.getByAnimation === "function"
@@ -19,45 +20,22 @@ if (
         }
     })
 }
-gsap.globalTimeline.pause()
-tl_to_use = gsap.exportRoot({
-    paused: true,
-    smoothChildTiming: false,
-}, false)
-const moverRootChildren = tl_to_use
+const moverInitialRootSnapshot = gsap.globalTimeline
     .getChildren(false, true, true)
-    .filter(child => {
-        const targets = (
-            typeof child.targets === "function"
-        ) ? child.targets() : []
-        const isImmediateSetupTween = (
-            typeof child.duration === "function"
-            && child.duration() === 0
-            && typeof child.delay === "function"
-            && child.delay() === 0
-            && targets.length > 0
-            && targets.every(target => typeof target !== "function")
-        )
-        if (isImmediateSetupTween) {
-            tl_to_use.remove(child)
-            return false
-        }
-        return true
-    })
-tl_to_use.getChildren(true, true, true).forEach(child => {
-    const delay = typeof child.delay === "function" ? child.delay() : 0
-    if (moverRootChildren.includes(child)) {
-        child.startTime(delay)
-    }
-    if (typeof child.paused === "function" && child.paused()) {
-        child.paused(false)
-    }
-})
-tl_to_use.seek(0, false).pause();
+    .map(animation => ({
+        animation,
+        delay: (
+            typeof animation.delay === "function"
+        ) ? animation.delay() : 0,
+        startTime: animation.startTime(),
+    }))
+gsap.globalTimeline.pause()
 // tl_to_use.eventCallback("onUpdate", showFrame);
 
 // Use duration() instead of totalDuration() to handle infinite repeats (repeat(-1))
-const totalSteps = Math.ceil(tl_to_use.duration() * 60);
+let totalSteps = 0;
+let moverVisualizationFrame = null;
+let moverVisualizationPlaybackToken = 0;
 
 // create a new p element and append it after the element with id="prompt"
 let frameCount = document.createElement("p");
@@ -65,16 +43,73 @@ let frameNum = 0;
 frameCount.textContent = `frame: 0 / ${totalSteps}`;
 document.getElementById("prompt").after(frameCount);
 
+function refreshTimelineVisualization() {
+    if (!tl_to_use) return false
+    totalSteps = Math.ceil(tl_to_use.duration() * 60)
+    showFrame()
+    return true
+}
+
+function getTimelineForVisualization() {
+    if (!tl_to_use && typeof initializeTimelineControl === "function") {
+        initializeTimelineControl()
+    }
+    if (!tl_to_use) {
+        throw new Error("MoVer timeline control is not initialized")
+    }
+    refreshTimelineVisualization()
+    return tl_to_use
+}
+
 function showFrame() {
+    if (!tl_to_use) return;
     frameNum = Math.floor(tl_to_use.time() * 60);
     frameCount.textContent = `frame: ${frameNum} / ${totalSteps}`;
 }
 
+function stopTimelineVisualizationPlayback() {
+    moverVisualizationPlaybackToken++
+    if (moverVisualizationFrame !== null) {
+        cancelAnimationFrame(moverVisualizationFrame)
+        moverVisualizationFrame = null
+    }
+    if (tl_to_use) tl_to_use.pause()
+    return true
+}
+
 function play() {
-    tl_to_use.seek(0)
-    tl_to_use.play()
+    const timeline = getTimelineForVisualization()
+    stopTimelineVisualizationPlayback()
+    timeline.totalTime(0, false).pause()
+    const startedAt = performance.now()
+    const playbackToken = ++moverVisualizationPlaybackToken
+    const render = now => {
+        if (
+            tl_to_use !== timeline
+            || moverVisualizationPlaybackToken !== playbackToken
+        ) {
+            moverVisualizationFrame = null
+            return
+        }
+        const elapsed = Math.max(0, (now - startedAt) / 1000)
+        const duration = timeline.totalDuration()
+        timeline.totalTime(Math.min(elapsed, duration), false)
+        showFrame()
+        const updatedDuration = timeline.totalDuration()
+        if (
+            tl_to_use !== timeline
+            || moverVisualizationPlaybackToken !== playbackToken
+        ) {
+            moverVisualizationFrame = null
+        } else if (elapsed < updatedDuration) {
+            moverVisualizationFrame = requestAnimationFrame(render)
+        } else {
+            moverVisualizationFrame = null
+        }
+    }
+    moverVisualizationFrame = requestAnimationFrame(render)
 }
 
 async function pause() {
-    tl_to_use.pause()
+    stopTimelineVisualizationPlayback()
 }

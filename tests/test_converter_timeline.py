@@ -193,6 +193,210 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual(values[0], 50, places=4)
             self.assertAlmostEqual(values[1], 100, places=4)
 
+    async def test_preseeked_paused_root_keeps_effective_delay(self) -> None:
+        page = await self._load_page(
+            """
+            window.preseekedState = {value: 0};
+            window.preseekedRoot = gsap.timeline({
+                paused: true,
+                delay: 0.2,
+            });
+            preseekedRoot.to(
+                preseekedState,
+                {value: 100, duration: 1, ease: "none"}
+            );
+            preseekedRoot.totalTime(0.5, false);
+            """
+        )
+
+        result = await page.evaluate(
+            """() => {
+                const selection = initializeTimelineControl();
+                const controlledRoot = tl_to_use.getChildren(
+                    false, true, true
+                )[0];
+                const initialized = {
+                    childStart: controlledRoot.startTime(),
+                    childTime: controlledRoot.totalTime(),
+                    duration: tl_to_use.totalDuration(),
+                    value: preseekedState.value,
+                };
+                seekToTime(0.1);
+                const beforeDelay = preseekedState.value;
+                seekToTime(0.7);
+                const middle = preseekedState.value;
+                seekToTime(1.2);
+                return {
+                    beforeDelay,
+                    initialized,
+                    middle,
+                    paused: preseekedRoot.paused(),
+                    selection,
+                    end: preseekedState.value,
+                };
+            }"""
+        )
+
+        self.assertEqual(result["selection"]["rootCount"], 1)
+        self.assertEqual(result["selection"]["resumedChildren"], 1)
+        self.assertAlmostEqual(result["initialized"]["childStart"], 0.2, places=6)
+        self.assertAlmostEqual(result["initialized"]["childTime"], 0, places=6)
+        self.assertAlmostEqual(result["initialized"]["duration"], 1.2, places=6)
+        self.assertAlmostEqual(result["initialized"]["value"], 0, places=4)
+        self.assertAlmostEqual(result["beforeDelay"], 0, places=4)
+        self.assertAlmostEqual(result["middle"], 50, places=4)
+        self.assertAlmostEqual(result["end"], 100, places=4)
+        self.assertFalse(result["paused"])
+
+    async def test_visual_playback_advances_and_reinitializes_cleanly(self) -> None:
+        page = await self._load_page(
+            """
+            window.playbackState = {value: 0};
+            const playbackAnimation = gsap.timeline();
+            playbackAnimation.to(
+                playbackState,
+                {value: 100, duration: 1, ease: "none"}
+            );
+            """
+        )
+
+        await page.evaluate(
+            """() => {
+                initializeTimelineControl();
+                window.firstControlledRoot = tl_to_use;
+                play();
+            }"""
+        )
+        await page.wait_for_timeout(75)
+        playing = await page.evaluate(
+            """() => ({
+                globalPaused: gsap.globalTimeline.paused(),
+                parentIsNull: tl_to_use.parent === null,
+                time: tl_to_use.totalTime(),
+                unexpectedRoots: getUnexpectedRootAnimations().length,
+                value: playbackState.value,
+            })"""
+        )
+        reinitialized = await page.evaluate(
+            """() => {
+                const selection = initializeTimelineControl();
+                const sameRoot = tl_to_use === firstControlledRoot;
+                seekToTime(0.5);
+                const result = {
+                    sameRoot,
+                    selection,
+                    unexpectedRoots: getUnexpectedRootAnimations().length,
+                    value: playbackState.value,
+                };
+                stopTimelineVisualizationPlayback();
+                return result;
+            }"""
+        )
+
+        self.assertTrue(playing["globalPaused"])
+        self.assertTrue(playing["parentIsNull"])
+        self.assertGreater(playing["time"], 0)
+        self.assertGreater(playing["value"], 0)
+        self.assertEqual(playing["unexpectedRoots"], 0)
+        self.assertTrue(reinitialized["sameRoot"])
+        self.assertEqual(reinitialized["selection"]["rootCount"], 1)
+        self.assertEqual(reinitialized["unexpectedRoots"], 0)
+        self.assertAlmostEqual(reinitialized["value"], 50, places=4)
+
+    async def test_visual_playback_callback_can_cancel_next_frame(self) -> None:
+        page = await self._load_page(
+            """
+            window.visualCallbackState = {value: 0};
+            window.visualCallbackCount = 0;
+            const visualCallbackAnimation = gsap.timeline();
+            visualCallbackAnimation.to(
+                visualCallbackState,
+                {value: 100, duration: 1, ease: "none"},
+                0
+            );
+            visualCallbackAnimation.call(() => {
+                visualCallbackCount++;
+                pause();
+            }, null, 0.01);
+            """
+        )
+
+        result = await page.evaluate(
+            """() => {
+                initializeTimelineControl();
+                const pending = new Map();
+                let nextFrameId = 1;
+                window.requestAnimationFrame = callback => {
+                    const id = nextFrameId++;
+                    pending.set(id, callback);
+                    return id;
+                };
+                window.cancelAnimationFrame = id => pending.delete(id);
+                play();
+                const entry = pending.entries().next().value;
+                pending.delete(entry[0]);
+                entry[1](performance.now() + 100);
+                return {
+                    callbackCount: visualCallbackCount,
+                    pendingFrames: pending.size,
+                    value: visualCallbackState.value,
+                };
+            }"""
+        )
+
+        self.assertEqual(result["callbackCount"], 1)
+        self.assertEqual(result["pendingFrames"], 0)
+        self.assertGreater(result["value"], 0)
+        self.assertLess(result["value"], 100)
+
+    async def test_timeline_validator_matches_total_time_contract(self) -> None:
+        page = await self._load_page(
+            """
+            window.validatorAnimation = gsap.timeline();
+            validatorAnimation.to({}, {duration: 1});
+            """
+        )
+
+        result = await page.evaluate(
+            """() => {
+                const oldShape = {
+                    seek() {},
+                    pause() {},
+                    totalDuration() { return 1; },
+                    getChildren() { return []; },
+                    getTweensOf() { return []; },
+                    totalProgress() {},
+                };
+                const currentShape = {
+                    duration() { return 1; },
+                    pause() { return this; },
+                    totalTime() { return this; },
+                    totalDuration() { return 1; },
+                    getChildren() { return []; },
+                    getTweensOf() { return []; },
+                };
+                return {
+                    actual: isControllableGsapTimeline(validatorAnimation),
+                    currentShape: isControllableGsapTimeline(currentShape),
+                    missingDuration: isControllableGsapTimeline({
+                        ...currentShape,
+                        duration: null,
+                    }),
+                    missingTotalTime: isControllableGsapTimeline({
+                        ...currentShape,
+                        totalTime: null,
+                    }),
+                    oldShape: isControllableGsapTimeline(oldShape),
+                };
+            }"""
+        )
+
+        self.assertTrue(result["actual"])
+        self.assertTrue(result["currentShape"])
+        self.assertFalse(result["missingDuration"])
+        self.assertFalse(result["missingTotalTime"])
+        self.assertFalse(result["oldShape"])
+
     async def test_renamed_timeline_needs_no_registration(self) -> None:
         page = await self._load_page(
             """
@@ -252,11 +456,26 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
                     childCount: tl_to_use.getChildren(
                         true, true, true
                     ).length,
+                    directRootCount: tl_to_use.getChildren(
+                        false, true, true
+                    ).length,
+                    hierarchyPreserved: (
+                        firstAnimation.parent === tl_to_use
+                        && anotherAnimation.parent === tl_to_use
+                        && firstAnimation.getChildren(
+                            false, true, true
+                        )[0].parent === firstAnimation
+                        && anotherAnimation.getChildren(
+                            false, true, true
+                        )[0].parent === anotherAnimation
+                    ),
                 };
             }"""
         )
 
         self.assertGreaterEqual(result["childCount"], 4)
+        self.assertEqual(result["directRootCount"], 2)
+        self.assertTrue(result["hierarchyPreserved"])
         self.assertAlmostEqual(result["first"], 75, places=4)
         self.assertAlmostEqual(result["second"], 150, places=4)
 
@@ -269,17 +488,23 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
                 immediateState,
                 {value: 100, duration: 1, ease: "none"}
             );
-            offsetRootTween.startTime(0.03);
-            gsap.to(
+            const delayedRootTween = gsap.to(
                 delayedState,
                 {value: 100, duration: 1, delay: 0.5, ease: "none"}
+            );
+            [offsetRootTween, delayedRootTween].forEach(animation => {
+                animation.startTime(animation.startTime() + 0.03);
+            });
+            window.expectedRootEpoch = Math.min(
+                offsetRootTween.startTime() - offsetRootTween.delay(),
+                delayedRootTween.startTime() - delayedRootTween.delay(),
             );
             """
         )
 
         result = await page.evaluate(
             """() => {
-                initializeTimelineControl();
+                const selection = initializeTimelineControl();
                 const info = getAnimationInfo(20);
                 seekToTime(0.25);
                 const early = [immediateState.value, delayedState.value];
@@ -288,7 +513,10 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
                     info,
                     early,
                     later: [immediateState.value, delayedState.value],
+                    selection,
+                    autoRemoveChildren: tl_to_use.autoRemoveChildren,
                     smoothChildTiming: tl_to_use.smoothChildTiming,
+                    expectedRootEpoch,
                 };
             }"""
         )
@@ -298,7 +526,64 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(result["early"][1], 0, places=4)
         self.assertAlmostEqual(result["later"][0], 75, places=4)
         self.assertAlmostEqual(result["later"][1], 25, places=4)
-        self.assertFalse(result["smoothChildTiming"])
+        self.assertEqual(result["selection"]["strategy"], "recorded-root")
+        self.assertEqual(result["selection"]["rootCount"], 2)
+        self.assertAlmostEqual(
+            result["selection"]["commonEpoch"],
+            result["expectedRootEpoch"],
+            places=6,
+        )
+        self.assertFalse(result["autoRemoveChildren"])
+        self.assertTrue(result["smoothChildTiming"])
+
+    async def test_callback_free_prepare_does_not_traverse_end_state(self) -> None:
+        page = await self._load_page(
+            """
+            window.prepareState = {value: 0};
+            window.prepareSawEnd = false;
+            const ordinaryAnimation = gsap.timeline();
+            ordinaryAnimation.to(
+                prepareState,
+                {
+                    value: 100,
+                    duration: 1,
+                    ease: "none",
+                    onUpdate: () => {
+                        if (prepareState.value >= 99) {
+                            prepareSawEnd = true;
+                        }
+                    },
+                }
+            );
+            """
+        )
+
+        result = await page.evaluate(
+            """() => {
+                const selection = initializeTimelineControl();
+                const before = {
+                    time: tl_to_use.totalTime(),
+                    value: prepareState.value,
+                };
+                const info = prepareTimelineForCapture();
+                return {
+                    before,
+                    info,
+                    preparedTime: tl_to_use.totalTime(),
+                    preparedValue: prepareState.value,
+                    prepareSawEnd,
+                    selection,
+                };
+            }"""
+        )
+
+        self.assertEqual(result["selection"]["strategy"], "recorded-root")
+        self.assertEqual(result["info"]["animDuration"], 1)
+        self.assertEqual(result["before"]["time"], 0)
+        self.assertAlmostEqual(result["before"]["value"], 0, places=4)
+        self.assertEqual(result["preparedTime"], 0)
+        self.assertAlmostEqual(result["preparedValue"], 0, places=4)
+        self.assertFalse(result["prepareSawEnd"])
 
     async def test_immediate_root_set_remains_static_across_replays(self) -> None:
         page = await self._load_page(
@@ -344,6 +629,52 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(result["firstEnd"], 20, places=4)
         self.assertAlmostEqual(result["secondStart"], 10, places=4)
         self.assertAlmostEqual(result["secondEnd"], 20, places=4)
+
+    async def test_materialized_root_setup_tween_is_retained(self) -> None:
+        page = await self._load_page(
+            """
+            window.retainedSetupState = {value: 0};
+            window.retainedMotionState = {value: 0};
+            gsap.globalTimeline.autoRemoveChildren = false;
+            gsap.set(retainedSetupState, {value: 7});
+            gsap.to(
+                retainedMotionState,
+                {value: 100, duration: 1, ease: "none"}
+            );
+            """
+        )
+
+        result = await page.evaluate(
+            """() => {
+                const selection = initializeTimelineControl();
+                const directChildren = tl_to_use.getChildren(
+                    false, true, true
+                );
+                seekToTime(0);
+                const start = {
+                    setup: retainedSetupState.value,
+                    motion: retainedMotionState.value,
+                };
+                seekToTime(1);
+                return {
+                    directZeroDurationTweens: directChildren.filter(child => (
+                        typeof child.targets === "function"
+                        && child.duration() === 0
+                    )).length,
+                    end: {
+                        setup: retainedSetupState.value,
+                        motion: retainedMotionState.value,
+                    },
+                    selection,
+                    start,
+                };
+            }"""
+        )
+
+        self.assertEqual(result["selection"]["rootCount"], 2)
+        self.assertEqual(result["directZeroDurationTweens"], 1)
+        self.assertEqual(result["start"], {"setup": 7, "motion": 0})
+        self.assertEqual(result["end"], {"setup": 7, "motion": 100})
 
     async def test_gsdevtools_is_disabled_without_killing_content(self) -> None:
         page = await self._load_page(
