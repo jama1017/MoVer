@@ -39,7 +39,7 @@ jobs:
         run: uv lock --check
 
       - name: Build wheel and sdist
-        run: uv build --clear --no-sources
+        run: uv build --no-sources
 
       - name: Check package metadata
         run: uvx twine check dist/*
