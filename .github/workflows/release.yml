@@ -29,6 +29,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
+          version: "0.6.6"
           enable-cache: true
 
       - name: Install build Python
@@ -38,7 +39,7 @@ jobs:
         run: uv lock --check
 
       - name: Build wheel and sdist
-        run: uv build --clear --no-sources
+        run: uv build --no-sources
 
       - name: Check package metadata
         run: uvx twine check dist/*
@@ -50,15 +51,15 @@ jobs:
             --wheel \
             --no-sources \
             --out-dir "${RUNNER_TEMP}/rebuilt" \
-            dist/mover-0.3.0.tar.gz
+            dist/mover-0.3.1.tar.gz
 
       - name: Compare artifact manifests
         shell: bash
         run: |
           python tests/check_release_artifacts.py \
-            --wheel dist/mover-0.3.0-py3-none-any.whl \
-            --sdist dist/mover-0.3.0.tar.gz \
-            --rebuilt-wheel "${RUNNER_TEMP}/rebuilt/mover-0.3.0-py3-none-any.whl"
+            --wheel dist/mover-0.3.1-py3-none-any.whl \
+            --sdist dist/mover-0.3.1.tar.gz \
+            --rebuilt-wheel "${RUNNER_TEMP}/rebuilt/mover-0.3.1-py3-none-any.whl"
 
       - name: Upload tested distribution
         uses: actions/upload-artifact@v4
@@ -103,6 +104,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
+          version: "0.6.6"
           enable-cache: true
 
       - name: Download built distribution
@@ -122,14 +124,14 @@ jobs:
         if: matrix.profile == 'minimal'
         shell: bash
         run: |
-          uv pip install "${RUNNER_TEMP}/dist/mover-0.3.0-py3-none-any.whl"
+          uv pip install "${RUNNER_TEMP}/dist/mover-0.3.1-py3-none-any.whl"
 
       - name: Install full wheel
         if: matrix.profile == 'full'
         shell: bash
         run: |
           uv pip install \
-            "mover[full] @ file://${RUNNER_TEMP}/dist/mover-0.3.0-py3-none-any.whl"
+            "mover[full] @ file://${RUNNER_TEMP}/dist/mover-0.3.1-py3-none-any.whl"
 
       - name: Check installed dependencies
         run: uv pip check
@@ -171,11 +173,12 @@ jobs:
           MOVER_REQUIRE_BROWSER: "1"
           PYTHONPATH: ${{ github.workspace }}/tests
         run: |
-          python -m unittest \
+          python -W error::ResourceWarning -m unittest \
             test_animation_prompt_assets \
             test_converter_capture \
             test_converter_dom \
             test_converter_timeline \
+            test_render_session \
             test_mover_querier \
             test_transform_types \
             -v
@@ -214,6 +217,8 @@ jobs:
     steps:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.6.6"
 
       - name: Download built distribution
         uses: actions/download-artifact@v4
@@ -232,7 +237,7 @@ jobs:
         shell: bash
         run: |
           uv pip install \
-            "mover[${{ matrix.extra }}] @ file://${RUNNER_TEMP}/dist/mover-0.3.0-py3-none-any.whl"
+            "mover[${{ matrix.extra }}] @ file://${RUNNER_TEMP}/dist/mover-0.3.1-py3-none-any.whl"
           uv pip check
 
       - name: Verify provider imports

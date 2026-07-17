@@ -21,7 +21,21 @@ from mover.converter.mover_converter import (
     parse_args,
     run_conversion,
 )
+from mover.converter.raster_capture import (
+    _plan_batch_chunk_size,
+    capture_png_frames_at_times,
+)
 
+PROPERTY_REGISTRY = json.loads(
+    (
+        Path(__file__).parent.parent
+        / "src"
+        / "mover"
+        / "converter"
+        / "assets"
+        / "property_registry.json"
+    ).read_text(encoding="utf-8")
+)
 
 OPTIONAL_JSON_FIXTURE = """<!doctype html>
 <html>
@@ -252,6 +266,44 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(page.svg_locator.style, original_style)
             self.assertEqual(len(page.svg_locator.evaluate_calls), 4)
+
+
+class RasterCaptureValidationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_invalid_request_is_rejected_before_page_work(self) -> None:
+        page = FakePage()
+        cases = (
+            (
+                {"seek_times": [0.0], "width": 0, "height": 10},
+                "positive integers",
+            ),
+            (
+                {
+                    "seek_times": [0.0],
+                    "width": 10,
+                    "height": 10,
+                    "strategy": "unknown",
+                },
+                "Unsupported capture strategy",
+            ),
+            (
+                {
+                    "seek_times": [float("nan")],
+                    "width": 10,
+                    "height": 10,
+                },
+                "finite numbers",
+            ),
+        )
+        for kwargs, message in cases:
+            with self.assertRaisesRegex(ValueError, message):
+                await capture_png_frames_at_times(page, **kwargs)
+        self.assertEqual(page.evaluate_calls, [])
+
+    def test_chunk_limit_is_frame_height_and_pixel_bounded(self) -> None:
+        self.assertEqual(_plan_batch_chunk_size(128, 128), 100)
+        self.assertEqual(_plan_batch_chunk_size(1920, 1080), 3)
+        self.assertEqual(_plan_batch_chunk_size(20_000, 1), 0)
+        self.assertEqual(_plan_batch_chunk_size(8_000, 8_000), 0)
 
 
 class OutputNamingTest(unittest.TestCase):
@@ -548,8 +600,30 @@ class OptionalJsonOutputIntegrationTest(unittest.TestCase):
 
             self.assertEqual(main_data["info"]["fps"], 10)
             self.assertEqual(rendered_data["info"]["fps"], 10)
-            self.assertIn("square", properties)
-            self.assertTrue(properties["square"])
+            self.assertEqual(len(main_data["square"]["transformedPts"]), 2)
+            self.assertNotEqual(
+                main_data["square"]["transformedPts"][0],
+                main_data["square"]["transformedPts"][-1],
+            )
+            self.assertEqual(
+                rendered_data["info"]["propertyConfig"],
+                {
+                    **PROPERTY_REGISTRY["defaults"],
+                    "svgAttributes": [],
+                },
+            )
+            for property_name in (
+                PROPERTY_REGISTRY["defaults"]["spatial"]
+                + PROPERTY_REGISTRY["defaults"]["visual"]
+            ):
+                self.assertEqual(
+                    len(rendered_data["square"][property_name]),
+                    2,
+                )
+            self.assertEqual(
+                set(properties["square"]),
+                {"transformedPts", "translateX"},
+            )
 
 
 if __name__ == "__main__":
