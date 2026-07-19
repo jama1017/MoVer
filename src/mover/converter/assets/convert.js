@@ -297,6 +297,27 @@ function installTimelineForCapture(
     };
 }
 
+function timelineRequiresRebuildBetweenCaptures(timeline = tl_to_use) {
+    if (!timeline) {
+        return false;
+    }
+    const animations = [
+        timeline,
+        ...(typeof timeline.getChildren === "function"
+            ? timeline.getChildren(true, true, true)
+            : []),
+    ];
+    return animations.some(animation => {
+        const value = animation.vars?.clearProps;
+        return (
+            value !== undefined
+            && value !== null
+            && value !== false
+            && value !== ""
+        );
+    });
+}
+
 function rebuildAnimationForCapture(
     completeParams,
     captureDuration = moverCaptureDuration,
@@ -336,7 +357,12 @@ function rebuildAnimationForCapture(
         captureDuration,
     );
     const info = prepareTimelineForCapture();
-    return {selection, info};
+    return {
+        selection,
+        info,
+        requiresRebuildBetweenCaptures:
+            timelineRequiresRebuildBetweenCaptures(),
+    };
 }
 
 function seekControlledTimeline(time) {
@@ -855,6 +881,17 @@ function getBatchPageBackgroundState() {
     ]);
 }
 
+function isIdentityCssTransform(value) {
+    if (!value || value === "none") {
+        return true;
+    }
+    try {
+        return new DOMMatrixReadOnly(value).isIdentity;
+    } catch (_error) {
+        return false;
+    }
+}
+
 function getBatchCaptureSupport(
     frameWidth = null,
     frameHeight = null,
@@ -960,7 +997,11 @@ function getBatchCaptureSupport(
             continue;
         }
         for (const target of animation.targets()) {
+            // Detached targets cannot paint. This support check runs before
+            // capture and after every synchronous seek, so a callback that
+            // reconnects one is rejected before its frame is cloned.
             if (target instanceof Element
+                && target.isConnected
                 && target !== source
                 && !source.contains(target)) {
                 return {
@@ -986,13 +1027,19 @@ function getBatchCaptureSupport(
 
     const sceneStyle = getComputedStyle(source);
     const unsupportedSceneStyle = [
-        ["transform", sceneStyle.transform, "none"],
-        ["filter", sceneStyle.filter, "none"],
-        ["mix-blend-mode", sceneStyle.mixBlendMode, "normal"],
-        ["opacity", sceneStyle.opacity, "1"],
-        ["clip-path", sceneStyle.clipPath, "none"],
-        ["mask-image", sceneStyle.maskImage, "none"],
-    ].find(([_name, value, supported]) => value && value !== supported);
+        ["transform", sceneStyle.transform, isIdentityCssTransform],
+        ["filter", sceneStyle.filter, value => value === "none"],
+        [
+            "mix-blend-mode",
+            sceneStyle.mixBlendMode,
+            value => value === "normal",
+        ],
+        ["opacity", sceneStyle.opacity, value => value === "1"],
+        ["clip-path", sceneStyle.clipPath, value => value === "none"],
+        ["mask-image", sceneStyle.maskImage, value => value === "none"],
+    ].find(([_name, value, isSupported]) => (
+        value && !isSupported(value)
+    ));
     if (unsupportedSceneStyle) {
         return {
             supported: false,

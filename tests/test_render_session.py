@@ -8,6 +8,7 @@ from unittest.mock import patch
 import numpy as np
 from playwright.async_api import Error as PlaywrightError
 
+from mover.converter.raster_capture import capture_png_frames_at_times
 from mover.converter.render_session import RenderSession
 
 
@@ -87,12 +88,101 @@ REBUILD_FIXTURE = """<!doctype html>
 </html>
 """
 
+CLEAR_PROPS_REBUILD_FIXTURE = """<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <style>html, body { margin: 0; padding: 0; }</style>
+    <script src="./gsap.min.js"></script>
+</head>
+<body>
+    <svg width="200" height="200" viewBox="0 0 200 200">
+        <rect width="200" height="200" fill="#f4f4f4"/>
+        <g id="actor" transform="matrix(1.5,0,0,1.5,20,-50)">
+            <circle cx="40" cy="100" r="18" fill="#6f4cff"/>
+            <path d="M40 118 L75 145" fill="none" stroke="#111" stroke-width="8"/>
+        </g>
+    </svg>
+    <script>
+        const actor = document.querySelector("#actor");
+        const initialTransform = "matrix(1.5,0,0,1.5,20,-50)";
+
+        function resetScene(params) {
+            actor.removeAttribute("style");
+            actor.removeAttribute("data-svg-origin");
+            actor.setAttribute("transform", initialTransform);
+            actor.setAttribute("opacity", "1");
+            actor.querySelector("circle").setAttribute("fill", params.color);
+        }
+
+        function buildTimeline(params) {
+            resetScene(params);
+            const timeline = gsap.timeline({paused: true});
+            timeline.set(actor, {clearProps: "all"}, 0);
+            timeline.set(actor, {
+                svgOrigin: "40 100",
+                rotation: 0,
+                y: 0,
+            }, 0);
+            timeline.to(actor, {
+                y: -params.distance,
+                rotation: 20,
+                duration: params.duration / 2,
+                ease: "power2.out",
+            }, 0.1);
+            timeline.to(actor, {
+                y: 0,
+                rotation: 0,
+                duration: params.duration / 2,
+                ease: "power2.inOut",
+            });
+            return timeline;
+        }
+
+        let tl = buildTimeline({
+            color: "#6f4cff",
+            distance: 30,
+            duration: 1,
+        });
+
+        function rebuildAnimation(completeParams) {
+            if (
+                !completeParams
+                || typeof completeParams.color !== "string"
+                || !Number.isFinite(completeParams.distance)
+                || !Number.isFinite(completeParams.duration)
+            ) {
+                throw new Error("complete clearProps parameters are required");
+            }
+            if (typeof tl_to_use !== "undefined" && tl_to_use) {
+                tl_to_use
+                    .getChildren(true, true, true)
+                    .forEach(animation => animation.kill());
+                tl_to_use.kill();
+            }
+            gsap.killTweensOf(actor);
+            tl = buildTimeline(completeParams);
+            return tl;
+        }
+    </script>
+    <script src="./convert.js"></script>
+</body>
+</html>
+"""
+
 
 class RenderSessionTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.html_path = Path(self.temp_dir.name) / "rebuild.html"
         self.html_path.write_text(REBUILD_FIXTURE, encoding="utf-8")
+        self.clear_props_path = (
+            Path(self.temp_dir.name) / "clear_props_rebuild.html"
+        )
+        self.clear_props_path.write_text(
+            CLEAR_PROPS_REBUILD_FIXTURE,
+            encoding="utf-8",
+        )
         self.sessions: list[RenderSession] = []
 
     async def asyncTearDown(self) -> None:
@@ -103,8 +193,11 @@ class RenderSessionTest(unittest.IsolatedAsyncioTestCase):
                 pass
         self.temp_dir.cleanup()
 
-    async def _start_session(self) -> RenderSession:
-        session = RenderSession(self.html_path)
+    async def _start_session(
+        self,
+        html_path: Path | None = None,
+    ) -> RenderSession:
+        session = RenderSession(html_path or self.html_path)
         self.sessions.append(session)
         try:
             return await session.start()
@@ -245,7 +338,7 @@ class RenderSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(resource.closed)
         self.assertIsNone(session._page)
 
-    async def test_repeated_capture_reuses_loaded_page(self) -> None:
+    async def test_repeated_safe_capture_reuses_loaded_page(self) -> None:
         session = await self._start_session()
         page = session.page
         context = page.context
@@ -274,6 +367,80 @@ class RenderSessionTest(unittest.IsolatedAsyncioTestCase):
             ),
             navigation_count,
         )
+        for first_frame, second_frame in zip(first, second):
+            np.testing.assert_array_equal(first_frame, second_frame)
+
+    async def test_clear_props_second_capture_requires_rebuild(self) -> None:
+        session = await self._start_session(self.clear_props_path)
+        times = [0.0, 0.3, 0.6, 1.1]
+
+        await session.capture(
+            times,
+            width=128,
+            height=128,
+            hide_grid=True,
+        )
+        with self.assertRaisesRegex(RuntimeError, "call rebuild"):
+            await session.capture(
+                times,
+                width=128,
+                height=128,
+                hide_grid=True,
+            )
+        self.assertEqual(session.state, "started")
+
+    async def test_clear_props_fresh_batch_matches_fresh_sequential(
+        self,
+    ) -> None:
+        sequential_session = await self._start_session(self.clear_props_path)
+        batch_session = await self._start_session(self.clear_props_path)
+        times = [0.0, 0.3, 0.6, 1.1]
+
+        sequential = await capture_png_frames_at_times(
+            sequential_session.page,
+            times,
+            width=128,
+            height=128,
+            strategy="sequential",
+            hide_grid=True,
+        )
+        batched = await batch_session.capture(
+            times,
+            width=128,
+            height=128,
+            hide_grid=True,
+        )
+
+        for sequential_frame, batch_frame in zip(sequential, batched):
+            self.assertLess(
+                float(np.abs(sequential_frame - batch_frame).mean()),
+                0.001,
+            )
+
+    async def test_clear_props_rebuild_makes_capture_repeatable(self) -> None:
+        session = await self._start_session(self.clear_props_path)
+        params = {
+            "color": "#6f4cff",
+            "distance": 30,
+            "duration": 1.0,
+        }
+        times = [0.0, 0.3, 0.6, 1.1]
+
+        await session.rebuild(params)
+        first = await session.capture(
+            times,
+            width=128,
+            height=128,
+            hide_grid=True,
+        )
+        await session.rebuild(params)
+        second = await session.capture(
+            times,
+            width=128,
+            height=128,
+            hide_grid=True,
+        )
+
         for first_frame, second_frame in zip(first, second):
             np.testing.assert_array_equal(first_frame, second_frame)
 

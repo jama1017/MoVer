@@ -91,6 +91,8 @@ class RenderSession:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_operation: str | None = None
         self._close_task: asyncio.Task | None = None
+        self._capture_requires_rebuild = False
+        self._timeline_requires_rebuild_between_captures = False
 
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
@@ -221,6 +223,15 @@ class RenderSession:
         self.timeline_info = await self._page.evaluate(
             "prepareTimelineForCapture()"
         )
+        await self._refresh_capture_reuse_policy()
+
+    async def _refresh_capture_reuse_policy(self) -> None:
+        assert self._page is not None
+        self._timeline_requires_rebuild_between_captures = (
+            await self._page.evaluate(
+                "timelineRequiresRebuildBetweenCaptures()"
+            )
+        )
 
     async def evaluate(self, expression: str, argument: Any = None) -> Any:
         page = self._begin_operation("evaluate")
@@ -251,6 +262,10 @@ class RenderSession:
             )
             self.timeline_selection = result["selection"]
             self.timeline_info = result["info"]
+            self._timeline_requires_rebuild_between_captures = bool(
+                result["requiresRebuildBetweenCaptures"]
+            )
+            self._capture_requires_rebuild = False
             return result
         except BaseException:
             await self._close_after_failure()
@@ -267,9 +282,16 @@ class RenderSession:
         hide_grid: bool = False,
         omit_background: bool = False,
     ) -> list[np.ndarray]:
+        if self._capture_requires_rebuild:
+            self._require_page()
+            raise RuntimeError(
+                "RenderSession capture already consumed the current timeline "
+                "state; call rebuild() before capturing again, or start a new "
+                "session for sources without a rebuild hook"
+            )
         page = self._begin_operation("capture")
         try:
-            return await capture_png_frames_at_times(
+            frames = await capture_png_frames_at_times(
                 page,
                 seek_times,
                 width=width,
@@ -277,6 +299,10 @@ class RenderSession:
                 hide_grid=hide_grid,
                 omit_background=omit_background,
             )
+            self._capture_requires_rebuild = (
+                self._timeline_requires_rebuild_between_captures
+            )
+            return frames
         except BaseException:
             await self._close_after_failure()
             raise
