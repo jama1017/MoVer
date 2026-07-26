@@ -278,6 +278,10 @@ async def capture_frames_server_driven(
     filesystem output. ``hide_grid`` suppresses the SVG grid only in raster
     screenshots and does not mutate the page's persistent styles. GIF output
     requires a working FFmpeg installation.
+
+    Call this at most once per page load. A capture leaves element state at the
+    final frame and only the timeline time is restored, so a second pass silently
+    produces wrong early frames. Reload between passes, as ``run_conversion`` does.
     """
     output_format = output_format.lower()
     if fps <= 0:

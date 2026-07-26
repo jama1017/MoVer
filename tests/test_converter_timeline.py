@@ -1189,6 +1189,34 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(result["authored"], 1.25, places=4)
         self.assertAlmostEqual(result["duration"], result["authored"], places=6)
 
+    async def test_vis_js_freezes_root_before_convert_js_loads(self) -> None:
+        """vis.js loads a script tag ahead of convert.js on pages that include it,
+        and the root keeps advancing across that gap. Dropping this pause cost
+        ~4% of exact-frame matches against the browser oracle."""
+        page = await self.browser.new_page()
+        await page.set_content(BASE_DOCUMENT)
+        await page.add_script_tag(path=str(GSAP_JS))
+        await page.add_script_tag(
+            content="""
+            window.gapState = {value: 0};
+            gsap.to(gapState, {value: 100, duration: 1, ease: "none"});
+            """
+        )
+        # vis.js only -- convert.js has deliberately not loaded yet.
+        await page.add_script_tag(content=VIS_SOURCE)
+
+        before = await page.evaluate("() => gsap.globalTimeline.time()")
+        await page.wait_for_timeout(250)
+        after = await page.evaluate(
+            """() => ({
+                paused: gsap.globalTimeline.paused(),
+                time: gsap.globalTimeline.time(),
+            })"""
+        )
+
+        self.assertTrue(after["paused"])
+        self.assertAlmostEqual(after["time"], before, delta=0.01)
+
     async def test_root_is_frozen_at_load_without_vis_js(self) -> None:
         """Capture must not depend on vis.js: pages that embed convert.js alone
         still get the authored root frozen, so the captured set cannot drift."""
