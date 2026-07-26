@@ -137,6 +137,16 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         )
         return page
 
+    async def _load_page_without_vis(self, setup_script: str):
+        """Pages that embed convert.js directly, as external sources do."""
+        page = await self.browser.new_page()
+        await page.set_content(BASE_DOCUMENT)
+        await page.add_script_tag(path=str(GSAP_JS))
+        await page.add_script_tag(
+            content="\n".join((setup_script, CONVERT_SOURCE))
+        )
+        return page
+
     async def test_missing_prompt_loads_without_error_and_preserves_frames(
         self,
     ) -> None:
@@ -1083,6 +1093,81 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
             "Unsupported post-snapshot GSAP animation",
         ):
             await page.evaluate("prepareTimelineForCapture()")
+
+    async def test_callback_created_instant_set_is_tolerated(self) -> None:
+        """gsap.set() from a timeline callback mints a fresh zero-duration root
+        tween on every seek; those apply instantly and must not fail capture."""
+        page = await self._load_page(
+            """
+            window.setState = {value: 0};
+            window.renderCount = 0;
+            const sourceAnimation = gsap.timeline();
+            sourceAnimation.to(setState, {
+                value: 100,
+                duration: 1,
+                ease: "none",
+                onUpdate: () => {
+                    renderCount += 1;
+                    gsap.set(document.getElementById("selected"), {
+                        opacity: setState.value / 100,
+                    });
+                },
+            });
+            """
+        )
+
+        await page.evaluate("initializeTimelineControl()")
+        await page.evaluate("prepareTimelineForCapture()")
+        result = await page.evaluate(
+            """() => {
+                seekToTime(0.25);
+                seekToTime(0.5);
+                assertNoLateRootAnimations();
+                return {
+                    unexpectedRoots: getUnexpectedRootAnimations().length,
+                    value: setState.value,
+                    renderCount,
+                };
+            }"""
+        )
+
+        self.assertEqual(result["unexpectedRoots"], 0)
+        self.assertAlmostEqual(result["value"], 50, places=4)
+        self.assertGreater(result["renderCount"], 0)
+
+    async def test_root_is_frozen_at_load_without_vis_js(self) -> None:
+        """Capture must not depend on vis.js: pages that embed convert.js alone
+        still get the authored root frozen, so the captured set cannot drift."""
+        page = await self._load_page_without_vis(
+            """
+            window.frozenState = {value: 0};
+            gsap.to(frozenState, {value: 100, duration: 1, ease: "none"});
+            """
+        )
+
+        state = """() => ({
+            paused: gsap.globalTimeline.paused(),
+            autoRemoveChildren: gsap.globalTimeline.autoRemoveChildren,
+            snapshotDefined: typeof moverInitialRootSnapshot !== "undefined",
+            rootTime: gsap.globalTimeline.time(),
+            rootChildren:
+                gsap.globalTimeline.getChildren(false, true, true).length,
+        })"""
+        before = await page.evaluate(state)
+        await page.wait_for_timeout(300)
+        after = await page.evaluate(state)
+        selection = await page.evaluate("initializeTimelineControl()")
+
+        self.assertTrue(before["paused"])
+        self.assertFalse(before["autoRemoveChildren"])
+        self.assertFalse(before["snapshotDefined"])
+        # The root must not advance while waiting, so nothing is shed.
+        self.assertAlmostEqual(
+            after["rootTime"], before["rootTime"], delta=0.01
+        )
+        self.assertLess(after["rootTime"], 0.2)
+        self.assertEqual(after["rootChildren"], before["rootChildren"])
+        self.assertEqual(selection["rootCount"], 1)
 
     async def test_delayed_call_is_excluded_without_false_failure(self) -> None:
         page = await self._load_page(

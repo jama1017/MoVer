@@ -1,35 +1,8 @@
 let tl_to_use = null
 
-// Freeze and snapshot authored roots before the later converter script loads.
-// Reparenting happens once in initializeTimelineControl(), where the complete
-// recorded-root policy is available.
-if (
-    typeof GSDevTools !== "undefined"
-    && typeof GSDevTools.getByAnimation === "function"
-) {
-    const moverDevToolsAnimations = new Set(
-        gsap.globalTimeline.getChildren(true, true, true)
-    )
-    if (typeof tl !== "undefined" && tl) {
-        moverDevToolsAnimations.add(tl)
-    }
-    moverDevToolsAnimations.forEach(animation => {
-        const instance = GSDevTools.getByAnimation(animation)
-        if (instance && typeof instance.kill === "function") {
-            instance.kill()
-        }
-    })
-}
-const moverInitialRootSnapshot = gsap.globalTimeline
-    .getChildren(false, true, true)
-    .map(animation => ({
-        animation,
-        delay: (
-            typeof animation.delay === "function"
-        ) ? animation.delay() : 0,
-        startTime: animation.startTime(),
-    }))
-gsap.globalTimeline.pause()
+// Preview utility only: play/pause and frame count. Capture must not depend on this
+// file being loaded — freezing the authored root, disabling GSDevTools, and collecting
+// the recorded root all live in convert.js, which pages may embed without vis.js.
 // tl_to_use.eventCallback("onUpdate", showFrame);
 
 // Use duration() instead of totalDuration() to handle infinite repeats (repeat(-1))

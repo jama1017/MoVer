@@ -6,6 +6,20 @@ let moverPreparedControlDuration = null;
 let moverRecordedRootTimeline = null;
 let moverRecordedRootInfo = null;
 
+// Freeze the authored root at load. A ticker-driven root makes the captured animation
+// set and its duration depend on load timing.
+function freezeAuthoredGsapRoot() {
+    if (typeof gsap === "undefined" || !gsap.globalTimeline) {
+        return false;
+    }
+    // Finished animations must stay collectable.
+    gsap.globalTimeline.autoRemoveChildren = false;
+    gsap.globalTimeline.pause();
+    return true;
+}
+
+freezeAuthoredGsapRoot();
+
 function normalizeMoverCaptureDuration(value) {
     if (value === null || value === undefined) {
         return null;
@@ -86,28 +100,17 @@ function getAnimationDelay(animation) {
     return Number.isFinite(delay) ? delay : 0;
 }
 
+// Read the live root; freezeAuthoredGsapRoot() froze these values at load.
 function getInitialRootRecords(globalRoot) {
-    const snapshot = (
-        typeof moverInitialRootSnapshot !== "undefined"
-        && Array.isArray(moverInitialRootSnapshot)
-    )
-        ? moverInitialRootSnapshot
-        : globalRoot.getChildren(false, true, true);
-    return snapshot
-        .map(record => {
-            const animation = record && record.animation
-                ? record.animation
-                : record;
-            const recordedDelay = record && record.animation
-                ? Number(record.delay)
-                : getAnimationDelay(animation);
-            const recordedStart = record && record.animation
-                ? Number(record.startTime)
-                : Number(animation.startTime());
+    return globalRoot
+        .getChildren(false, true, true)
+        .map(animation => {
+            const delay = getAnimationDelay(animation);
+            const startTime = Number(animation.startTime());
             return {
                 animation,
-                delay: Number.isFinite(recordedDelay) ? recordedDelay : 0,
-                startTime: Number.isFinite(recordedStart) ? recordedStart : 0,
+                delay: Number.isFinite(delay) ? delay : 0,
+                startTime: Number.isFinite(startTime) ? startTime : 0,
             };
         })
         .filter(root => !isGsapDelayedCall(root.animation));
@@ -150,6 +153,15 @@ function initializeControlledTimelineAtZero(timeline) {
     return timeline;
 }
 
+// Zero-duration root animations (gsap.set, delayed calls) apply instantly and hold no time-varying state, so they cannot desync capture. Real animations still fail below.
+function isInstantRootAnimation(animation) {
+    return Boolean(
+        animation
+        && typeof animation.duration === "function"
+        && animation.duration() === 0
+    );
+}
+
 function getUnexpectedRootAnimations() {
     if (
         typeof tl_to_use === "undefined"
@@ -163,7 +175,7 @@ function getUnexpectedRootAnimations() {
         .getChildren(false, true, true)
         .filter(animation => (
             animation !== tl_to_use
-            && !isGsapDelayedCall(animation)
+            && !isInstantRootAnimation(animation)
         ));
 }
 
