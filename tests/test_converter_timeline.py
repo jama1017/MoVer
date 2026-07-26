@@ -7,7 +7,10 @@ from pathlib import Path
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
-from mover.converter.mover_converter import convert_animation
+from mover.converter.mover_converter import (
+    convert_animation,
+    neutralize_gsdevtools,
+)
 
 
 ASSETS = (
@@ -1134,6 +1137,57 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["unexpectedRoots"], 0)
         self.assertAlmostEqual(result["value"], 50, places=4)
         self.assertGreater(result["renderCount"], 0)
+
+    async def test_gsdevtools_is_neutralized_before_it_touches_the_root(
+        self,
+    ) -> None:
+        """GSDevTools does its global setup at script load, so MoVer serves a
+        no-op in its place. The captured timeline must then hold only the
+        authored animation, at exactly the authored duration."""
+        page = await self.browser.new_page()
+        await neutralize_gsdevtools(page)
+        await page.set_content(BASE_DOCUMENT)
+        await page.add_script_tag(path=str(GSAP_JS))
+        # Resolves through the route, so the stub is what actually loads.
+        await page.add_script_tag(
+            url="https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/GSDevTools.min.js"
+        )
+        await page.add_script_tag(
+            content="\n".join(
+                (
+                    """
+                    window.authoredState = {value: 0};
+                    const tl = gsap.timeline();
+                    tl.to(
+                        authoredState,
+                        {value: 100, duration: 1.25, ease: "none"}
+                    );
+                    window.authoredDuration = tl.totalDuration();
+                    let tl_to_use = null;
+                    tl_to_use = tl;
+                    GSDevTools.create({animation: tl_to_use});
+                    """,
+                    CONVERT_SOURCE,
+                )
+            )
+        )
+
+        result = await page.evaluate(
+            """() => {
+                const selection = initializeTimelineControl();
+                return {
+                    authored: authoredDuration,
+                    duration: selection.duration,
+                    rootCount: selection.rootCount,
+                    scrubberInDom: !!document.querySelector(".gs-dev-tools"),
+                };
+            }"""
+        )
+
+        self.assertFalse(result["scrubberInDom"])
+        self.assertEqual(result["rootCount"], 1)
+        self.assertAlmostEqual(result["authored"], 1.25, places=4)
+        self.assertAlmostEqual(result["duration"], result["authored"], places=6)
 
     async def test_root_is_frozen_at_load_without_vis_js(self) -> None:
         """Capture must not depend on vis.js: pages that embed convert.js alone

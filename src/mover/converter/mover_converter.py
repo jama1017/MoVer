@@ -446,6 +446,31 @@ async def capture_frames_server_driven(
                 shutil.rmtree(frames_dir, ignore_errors=True)
 
 
+_GSDEVTOOLS_STUB = (
+    "window.GSDevTools={create(){return null},"
+    "getByAnimation(){return null},register(){}};"
+)
+
+
+async def neutralize_gsdevtools(page: Page) -> None:
+    """Serve a no-op in place of GSDevTools.
+
+    GSDevTools runs its global setup at script load, not on create(): it clears
+    autoRemoveChildren, re-parents the page timeline onto the root at the current
+    playhead, animates its own scrubber there, and schedules a teardown timer.
+    All of that lands in the captured animation. Pages keep working because they
+    assign tl_to_use before calling create().
+    """
+    await page.route(
+        "**/GSDevTools*",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/javascript",
+            body=_GSDEVTOOLS_STUB,
+        ),
+    )
+
+
 def setup_fastapi_app(html_file: str, html_dir: str, base_name: str, output_format: str = "mp4", output_dir: str | None = None, save_animated_properties: bool = False) -> FastAPI:
     """Set up and configure the FastAPI application."""
     out_dir = output_dir or html_dir
@@ -582,6 +607,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
         async with async_playwright() as p:
             browser = await p.chromium.launch()
             page = await browser.new_page()
+            await neutralize_gsdevtools(page)
 
             # Set up console logging and network error handlers
             page.on("console", lambda msg: handle_console_message(msg, print_console))

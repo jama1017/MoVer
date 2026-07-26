@@ -23,6 +23,7 @@ from mover.converter.mover_converter import (
     _get_bound_port,
     _normalize_capture_duration,
     _wait_for_server_start,
+    neutralize_gsdevtools,
     setup_fastapi_app,
 )
 from mover.converter.raster_capture import capture_png_frames_at_times
@@ -173,6 +174,8 @@ class RenderSession:
             )
             assert self._context is not None
             await self._acquire_resource("_page", self._context.new_page())
+            assert self._page is not None
+            await neutralize_gsdevtools(self._page)
             await self._initialize_page()
         except BaseException:
             self._state = "closing"

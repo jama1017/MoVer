@@ -171,11 +171,46 @@ CLEAR_PROPS_REBUILD_FIXTURE = """<!doctype html>
 """
 
 
+# Mirrors external sources: GSDevTools from a CDN, then create() on the page's own
+# timeline. The request is served by RenderSession's route, so no network is used.
+GSDEVTOOLS_FIXTURE = """<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <script src="./gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/GSDevTools.min.js"></script>
+</head>
+<body>
+    <svg width="200" height="200" viewBox="0 0 200 200">
+        <rect width="200" height="200" fill="#f4f4f4"/>
+        <circle id="dot" cx="40" cy="100" r="18" fill="#d62728"/>
+    </svg>
+    <script>
+        gsap.set("#dot", {opacity: 1});
+        const tl = gsap.timeline();
+        tl.to("#dot", {cx: 160, duration: 1.25, ease: "none"});
+        window.authoredDuration = tl.totalDuration();
+    </script>
+    <script>
+        let tl_to_use = null
+        if (typeof tl !== 'undefined') { tl_to_use = tl } else { tl_to_use = gsap.globalTimeline }
+        GSDevTools.create({animation: tl_to_use});
+    </script>
+    <script src="./convert.js"></script>
+</body>
+</html>
+"""
+
+
 class RenderSessionTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.html_path = Path(self.temp_dir.name) / "rebuild.html"
         self.html_path.write_text(REBUILD_FIXTURE, encoding="utf-8")
+        self.gsdevtools_path = Path(self.temp_dir.name) / "gsdevtools.html"
+        self.gsdevtools_path.write_text(
+            GSDEVTOOLS_FIXTURE, encoding="utf-8"
+        )
         self.clear_props_path = (
             Path(self.temp_dir.name) / "clear_props_rebuild.html"
         )
@@ -211,6 +246,35 @@ class RenderSessionTest(unittest.IsolatedAsyncioTestCase):
             _reader, writer = await asyncio.open_connection("127.0.0.1", port)
             writer.close()
             await writer.wait_closed()
+
+    async def test_session_neutralizes_gsdevtools_on_the_page(self) -> None:
+        """RenderSession must install the GSDevTools stub itself. Loading the real
+        plugin re-parents the page timeline onto the root at the current playhead
+        and animates its own scrubber there, which inflates the captured duration
+        and the root count."""
+        session = await self._start_session(self.gsdevtools_path)
+
+        result = await session.evaluate(
+            """() => ({
+                authored: authoredDuration,
+                scrubberInDom: !!document.querySelector(".gs-dev-tools"),
+                realPluginLoaded: typeof GSDevTools !== "undefined"
+                    && typeof GSDevTools.getByAnimation === "function"
+                    && GSDevTools.getByAnimation.length > 0,
+            })"""
+        )
+        selection = session.timeline_selection or {}
+
+        self.assertFalse(result["scrubberInDom"])
+        self.assertFalse(result["realPluginLoaded"])
+        self.assertEqual(selection["rootCount"], 1)
+        self.assertAlmostEqual(result["authored"], 1.25, places=4)
+        self.assertAlmostEqual(
+            selection["duration"], result["authored"], places=6
+        )
+
+        frames = await session.capture([0.0, 0.625, 1.25], width=80, height=80)
+        self.assertEqual(len(frames), 3)
 
     async def test_start_capture_and_close_are_idempotent(self) -> None:
         session = await self._start_session()
