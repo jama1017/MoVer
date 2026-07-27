@@ -9,8 +9,16 @@ import fnmatch
 import hashlib
 import json
 import tarfile
+import tomllib
 import zipfile
 from pathlib import Path
+
+
+def expected_version() -> str:
+    """Read the release version from pyproject.toml, the source of truth."""
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject.open("rb") as handle:
+        return tomllib.load(handle)["project"]["version"]
 
 
 REQUIRED_RESOURCES = {
@@ -127,7 +135,7 @@ def check_wheel(path: Path) -> tuple[set[str], dict[str, bytes], dict[str, objec
 
     metadata = normalized_metadata(metadata_from_wheel(contents))
     require(metadata["Name"] == "mover", metadata)
-    require(metadata["Version"] == "0.3.1", metadata)
+    require(metadata["Version"] == expected_version(), metadata)
     require(metadata["Requires-Python"] == "<3.13,>=3.10", metadata)
     for extra in ("full", "groq", "media", "ollama", "openai", "vertex"):
         require(extra in metadata["Provides-Extra"], f"Missing extra: {extra}")
