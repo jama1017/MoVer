@@ -8,17 +8,23 @@ import importlib
 import importlib.metadata
 import importlib.util
 import json
+import re
 import sys
 import tempfile
-import tomllib
 from importlib import resources
 from pathlib import Path
 
 
 def expected_version(repo_root: Path) -> str:
-    """Read the release version from pyproject.toml, the source of truth."""
-    with (repo_root / "pyproject.toml").open("rb") as handle:
-        return tomllib.load(handle)["project"]["version"]
+    """Read the release version from pyproject.toml, the source of truth.
+
+    Parsed by regex rather than tomllib, which needs Python 3.11; this runs on
+    every interpreter in requires-python, including 3.10.
+    """
+    text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version = "([^"]+)"', text, flags=re.MULTILINE)
+    require(match is not None, "No version found in pyproject.toml")
+    return match.group(1)
 
 
 CONVERTER_ASSETS = {
