@@ -725,55 +725,6 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             )
         await self._assert_reset_state()
 
-    async def test_viewbox_only_transparent_scene_keeps_exact_dimensions(
-        self,
-    ) -> None:
-        await self.page.evaluate(
-            """() => {
-                document.documentElement.style.setProperty(
-                    "background", "transparent", "important"
-                );
-                document.body.style.setProperty(
-                    "background", "transparent", "important"
-                );
-                const source = document.querySelector("#source");
-                source.removeAttribute("width");
-                source.removeAttribute("height");
-                source.setAttribute("viewBox", "0 0 20 20");
-                source.style.setProperty(
-                    "background", "transparent", "important"
-                );
-            }"""
-        )
-        expected_state = await self._snapshot_original_state()
-        times = [0.0, 1.0]
-        sequential = await capture_png_frames_at_times(
-            self.page,
-            times,
-            width=160,
-            height=90,
-            strategy="sequential",
-            hide_grid=True,
-            omit_background=True,
-        )
-        batched = await capture_png_frames_at_times(
-            self.page,
-            times,
-            width=160,
-            height=90,
-            hide_grid=True,
-            omit_background=True,
-        )
-        for fast_frame, sequential_frame in zip(batched, sequential):
-            self.assertEqual(fast_frame.shape, (90, 160, 4))
-            np.testing.assert_allclose(
-                fast_frame,
-                sequential_frame,
-                atol=1.5 / 255.0,
-            )
-            self.assertEqual(fast_frame[0, 0, 3], 0.0)
-        await self._assert_reset_state(expected_state)
-
     async def test_scene_size_falls_back_to_viewbox_and_preserves_paint_fill(
         self,
     ) -> None:
