@@ -183,13 +183,14 @@ function initializeControlledTimelineAtZero(timeline) {
     return timeline;
 }
 
-// Zero-duration root animations hold no time-varying state, so they are not unsupported.
-// They do not necessarily apply instantly -- see unfreezeAuthoredGsapRootAfterSnapshot.
-function isInstantRootAnimation(animation) {
+// Settled means already applied: no time left and no delay. Zero duration alone is not
+// enough -- {delay} applies later, {repeat} reports a non-zero totalDuration.
+function isSettledInstantRootAnimation(animation) {
     return Boolean(
         animation
-        && typeof animation.duration === "function"
-        && animation.duration() === 0
+        && typeof animation.totalDuration === "function"
+        && animation.totalDuration() === 0
+        && getAnimationDelay(animation) === 0
     );
 }
 
@@ -206,7 +207,9 @@ function getUnexpectedRootAnimations() {
         .getChildren(false, true, true)
         .filter(animation => (
             animation !== tl_to_use
-            && !isInstantRootAnimation(animation)
+            // getInitialRootRecords leaves a delayedCall on the root by design.
+            && !isGsapDelayedCall(animation)
+            && !isSettledInstantRootAnimation(animation)
         ));
 }
 
