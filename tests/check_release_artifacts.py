@@ -8,17 +8,23 @@ import email
 import fnmatch
 import hashlib
 import json
+import re
 import tarfile
-import tomllib
 import zipfile
 from pathlib import Path
 
 
 def expected_version() -> str:
-    """Read the release version from pyproject.toml, the source of truth."""
+    """Read the release version from pyproject.toml, the source of truth.
+
+    Parsed by regex rather than tomllib, which needs Python 3.11; this runs on
+    every interpreter in requires-python, including 3.10.
+    """
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
-    with pyproject.open("rb") as handle:
-        return tomllib.load(handle)["project"]["version"]
+    text = pyproject.read_text(encoding="utf-8")
+    match = re.search(r'^version = "([^"]+)"', text, flags=re.MULTILINE)
+    require(match is not None, "No version found in pyproject.toml")
+    return match.group(1)
 
 
 REQUIRED_RESOURCES = {
