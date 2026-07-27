@@ -1187,6 +1187,38 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(set(seen)), 4, f"x never advanced: {seen}")
         self.assertAlmostEqual(seen[-1], 30, delta=0.5)
 
+    async def test_callback_created_delayed_set_is_rejected(self) -> None:
+        """A delayed gsap.set() from a callback must fail capture, not freeze silently.
+
+        duration === 0 does not imply "applies now": a delay makes the write
+        time-dependent, and it lands on the root rather than the recorded timeline.
+        Waving it through produced frames stuck at the element's first value while
+        the late-root guard reported nothing wrong."""
+        page = await self._load_page(
+            """
+            window.delayedSetState = {value: 0};
+            const writeTarget = document.getElementById("selected");
+            const sourceAnimation = gsap.timeline();
+            sourceAnimation.to(delayedSetState, {
+                value: 100,
+                duration: 1,
+                ease: "none",
+                onUpdate: () => gsap.set(writeTarget, {
+                    attr: {x: 5 + delayedSetState.value / 4},
+                    delay: 0.05,
+                }),
+            });
+            """
+        )
+
+        # The setup render fires the onUpdate, which mints the delayed set on the root,
+        # so the guard trips at initialization rather than part-way through capture.
+        with self.assertRaisesRegex(
+            PlaywrightError,
+            "Unsupported post-snapshot GSAP animation",
+        ):
+            await page.evaluate("initializeTimelineControl()")
+
     async def test_gsdevtools_is_neutralized_before_it_touches_the_root(
         self,
     ) -> None:
