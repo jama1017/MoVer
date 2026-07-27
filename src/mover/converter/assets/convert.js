@@ -20,6 +20,36 @@ function freezeAuthoredGsapRoot() {
 
 freezeAuthoredGsapRoot();
 
+let moverFrozenRootTime = null;
+
+// Detach, do not pause: GSAP defers a callback-created gsap.set to a tick, which a
+// paused root never delivers. The root still must not advance, hence the ticker removal.
+function unfreezeAuthoredGsapRootAfterSnapshot() {
+    if (typeof gsap === "undefined" || !gsap.globalTimeline) {
+        return false;
+    }
+    gsap.ticker.remove(gsap.updateRoot);
+    gsap.globalTimeline.autoRemoveChildren = true;
+    gsap.globalTimeline.resume();
+    moverFrozenRootTime = gsap.globalTimeline.totalTime();
+    return true;
+}
+
+// A re-attached root renderer would silently make capture load-timing dependent.
+function assertRootDidNotAdvance() {
+    if (moverFrozenRootTime === null || typeof gsap === "undefined") {
+        return true;
+    }
+    const drift = Math.abs(gsap.globalTimeline.totalTime() - moverFrozenRootTime);
+    if (drift > 0.000001) {
+        throw new Error(
+            "GSAP root advanced by " + drift + "s during capture: something is "
+            + "driving gsap.globalTimeline, so frames are no longer deterministic"
+        );
+    }
+    return true;
+}
+
 function normalizeMoverCaptureDuration(value) {
     if (value === null || value === undefined) {
         return null;
@@ -153,7 +183,8 @@ function initializeControlledTimelineAtZero(timeline) {
     return timeline;
 }
 
-// Zero-duration root animations (gsap.set, delayed calls) apply instantly and hold no time-varying state, so they cannot desync capture. Real animations still fail below.
+// Zero-duration root animations hold no time-varying state, so they are not unsupported.
+// They do not necessarily apply instantly -- see unfreezeAuthoredGsapRootAfterSnapshot.
 function isInstantRootAnimation(animation) {
     return Boolean(
         animation
@@ -253,6 +284,7 @@ function initializeTimelineControl(captureDuration = null) {
         rootCount: recorded.rootCount,
     };
     initializeControlledTimelineAtZero(tl_to_use);
+    unfreezeAuthoredGsapRootAfterSnapshot();
     moverControlPrepared = false;
     moverPreparedAnimations = null;
     moverPreparedControlDuration = null;
@@ -293,6 +325,7 @@ function installTimelineForCapture(
     moverRecordedRootTimeline = null;
     moverRecordedRootInfo = null;
     initializeControlledTimelineAtZero(tl_to_use);
+    unfreezeAuthoredGsapRootAfterSnapshot();
     moverControlPrepared = false;
     moverPreparedAnimations = null;
     moverPreparedControlDuration = null;
@@ -380,6 +413,7 @@ function rebuildAnimationForCapture(
 function seekControlledTimeline(time) {
     resumeControlledChildren(tl_to_use);
     tl_to_use.totalTime(time, false).pause();
+    assertRootDidNotAdvance();
     assertNoLateRootAnimations();
     assertPreparedTimelineStable();
     return tl_to_use;

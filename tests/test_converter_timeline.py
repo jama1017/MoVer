@@ -235,7 +235,7 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
                         && tl_to_use !== gsap.globalTimeline
                     ),
                     legacyPaused: tl.paused(),
-                    rootPaused: gsap.globalTimeline.paused(),
+                    rootTime: gsap.globalTimeline.totalTime(),
                 };
             }"""
         )
@@ -243,7 +243,13 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["selection"]["source"], "exported-root")
         self.assertTrue(result["usesWrapper"])
         self.assertFalse(result["legacyPaused"])
-        self.assertTrue(result["rootPaused"])
+        # Detached from the ticker, not paused, so assert non-advancement.
+        await page.wait_for_timeout(250)
+        self.assertAlmostEqual(
+            await page.evaluate("() => gsap.globalTimeline.totalTime()"),
+            result["rootTime"],
+            delta=0.001,
+        )
         for values in (
             result["firstValues"],
             result["secondValues"],
@@ -328,7 +334,7 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         await page.wait_for_timeout(75)
         playing = await page.evaluate(
             """() => ({
-                globalPaused: gsap.globalTimeline.paused(),
+                rootTime: gsap.globalTimeline.totalTime(),
                 parentIsNull: tl_to_use.parent === null,
                 time: tl_to_use.totalTime(),
                 unexpectedRoots: getUnexpectedRootAnimations().length,
@@ -351,7 +357,12 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
             }"""
         )
 
-        self.assertTrue(playing["globalPaused"])
+        # Root must not advance even while the preview loop drives tl_to_use.
+        self.assertAlmostEqual(
+            await page.evaluate("() => gsap.globalTimeline.totalTime()"),
+            playing["rootTime"],
+            delta=0.001,
+        )
         self.assertTrue(playing["parentIsNull"])
         self.assertGreater(playing["time"], 0)
         self.assertGreater(playing["value"], 0)
@@ -1098,8 +1109,9 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
             await page.evaluate("prepareTimelineForCapture()")
 
     async def test_callback_created_instant_set_is_tolerated(self) -> None:
-        """gsap.set() from a timeline callback mints a fresh zero-duration root
-        tween on every seek; those apply instantly and must not fail capture."""
+        """Capture must not reject the zero-duration tweens a callback gsap.set mints.
+
+        Does not check the write lands -- see ..._reaches_the_dom for that."""
         page = await self._load_page(
             """
             window.setState = {value: 0};
@@ -1137,6 +1149,43 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["unexpectedRoots"], 0)
         self.assertAlmostEqual(result["value"], 50, places=4)
         self.assertGreater(result["renderCount"], 0)
+
+    async def test_callback_created_instant_set_reaches_the_dom(self) -> None:
+        """A gsap.set() from a timeline callback must reach the DOM on its own seek,
+        not one seek late."""
+        page = await self._load_page(
+            """
+            window.domSetState = {value: 0};
+            const writeTarget = document.getElementById("selected");
+            const sourceAnimation = gsap.timeline();
+            sourceAnimation.to(domSetState, {
+                value: 100,
+                duration: 1,
+                ease: "none",
+                onUpdate: () => gsap.set(
+                    writeTarget, {attr: {x: 5 + domSetState.value / 4}}
+                ),
+            });
+            """
+        )
+
+        await page.evaluate("initializeTimelineControl()")
+        await page.evaluate("prepareTimelineForCapture()")
+        seen = await page.evaluate(
+            """() => {
+                const target = document.getElementById("selected");
+                const out = [];
+                [0, 0.25, 0.5, 0.75, 1].forEach(time => {
+                    seekToTime(time);
+                    out.push(Number(target.getAttribute("x")));
+                });
+                return out;
+            }"""
+        )
+
+        # x is driven from the proxy as 5 + value/4, so the last seek must read 30.
+        self.assertGreaterEqual(len(set(seen)), 4, f"x never advanced: {seen}")
+        self.assertAlmostEqual(seen[-1], 30, delta=0.5)
 
     async def test_gsdevtools_is_neutralized_before_it_touches_the_root(
         self,
@@ -1250,6 +1299,24 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertLess(after["rootTime"], 0.2)
         self.assertEqual(after["rootChildren"], before["rootChildren"])
         self.assertEqual(selection["rootCount"], 1)
+
+    async def test_root_advancing_during_capture_fails_loudly(self) -> None:
+        """A re-attached root renderer must abort capture, not silently drift."""
+        page = await self._load_page(
+            """
+            window.driftState = {value: 0};
+            gsap.to(driftState, {value: 100, duration: 1, ease: "none"});
+            """
+        )
+
+        await page.evaluate("initializeTimelineControl()")
+        await page.evaluate("prepareTimelineForCapture()")
+        await page.evaluate("seekToTime(0.25)")  # healthy seek first
+
+        await page.evaluate("() => gsap.ticker.add(gsap.updateRoot)")
+        await page.wait_for_timeout(250)
+        with self.assertRaisesRegex(PlaywrightError, "GSAP root advanced"):
+            await page.evaluate("seekToTime(0.5)")
 
     async def test_delayed_call_is_excluded_without_false_failure(self) -> None:
         page = await self._load_page(
