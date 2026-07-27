@@ -6,6 +6,50 @@ let moverPreparedControlDuration = null;
 let moverRecordedRootTimeline = null;
 let moverRecordedRootInfo = null;
 
+// Freeze the authored root at load. A ticker-driven root makes the captured animation
+// set and its duration depend on load timing.
+function freezeAuthoredGsapRoot() {
+    if (typeof gsap === "undefined" || !gsap.globalTimeline) {
+        return false;
+    }
+    // Finished animations must stay collectable.
+    gsap.globalTimeline.autoRemoveChildren = false;
+    gsap.globalTimeline.pause();
+    return true;
+}
+
+freezeAuthoredGsapRoot();
+
+let moverFrozenRootTime = null;
+
+// Detach, do not pause: GSAP defers a callback-created gsap.set to a tick, which a
+// paused root never delivers. The root still must not advance, hence the ticker removal.
+function unfreezeAuthoredGsapRootAfterSnapshot() {
+    if (typeof gsap === "undefined" || !gsap.globalTimeline) {
+        return false;
+    }
+    gsap.ticker.remove(gsap.updateRoot);
+    gsap.globalTimeline.autoRemoveChildren = true;
+    gsap.globalTimeline.resume();
+    moverFrozenRootTime = gsap.globalTimeline.totalTime();
+    return true;
+}
+
+// A re-attached root renderer would silently make capture load-timing dependent.
+function assertRootDidNotAdvance() {
+    if (moverFrozenRootTime === null || typeof gsap === "undefined") {
+        return true;
+    }
+    const drift = Math.abs(gsap.globalTimeline.totalTime() - moverFrozenRootTime);
+    if (drift > 0.000001) {
+        throw new Error(
+            "GSAP root advanced by " + drift + "s during capture: something is "
+            + "driving gsap.globalTimeline, so frames are no longer deterministic"
+        );
+    }
+    return true;
+}
+
 function normalizeMoverCaptureDuration(value) {
     if (value === null || value === undefined) {
         return null;
@@ -86,28 +130,17 @@ function getAnimationDelay(animation) {
     return Number.isFinite(delay) ? delay : 0;
 }
 
+// Read the live root; freezeAuthoredGsapRoot() froze these values at load.
 function getInitialRootRecords(globalRoot) {
-    const snapshot = (
-        typeof moverInitialRootSnapshot !== "undefined"
-        && Array.isArray(moverInitialRootSnapshot)
-    )
-        ? moverInitialRootSnapshot
-        : globalRoot.getChildren(false, true, true);
-    return snapshot
-        .map(record => {
-            const animation = record && record.animation
-                ? record.animation
-                : record;
-            const recordedDelay = record && record.animation
-                ? Number(record.delay)
-                : getAnimationDelay(animation);
-            const recordedStart = record && record.animation
-                ? Number(record.startTime)
-                : Number(animation.startTime());
+    return globalRoot
+        .getChildren(false, true, true)
+        .map(animation => {
+            const delay = getAnimationDelay(animation);
+            const startTime = Number(animation.startTime());
             return {
                 animation,
-                delay: Number.isFinite(recordedDelay) ? recordedDelay : 0,
-                startTime: Number.isFinite(recordedStart) ? recordedStart : 0,
+                delay: Number.isFinite(delay) ? delay : 0,
+                startTime: Number.isFinite(startTime) ? startTime : 0,
             };
         })
         .filter(root => !isGsapDelayedCall(root.animation));
@@ -150,6 +183,16 @@ function initializeControlledTimelineAtZero(timeline) {
     return timeline;
 }
 
+// Zero-duration root animations hold no time-varying state, so they are not unsupported.
+// They do not necessarily apply instantly -- see unfreezeAuthoredGsapRootAfterSnapshot.
+function isInstantRootAnimation(animation) {
+    return Boolean(
+        animation
+        && typeof animation.duration === "function"
+        && animation.duration() === 0
+    );
+}
+
 function getUnexpectedRootAnimations() {
     if (
         typeof tl_to_use === "undefined"
@@ -163,7 +206,7 @@ function getUnexpectedRootAnimations() {
         .getChildren(false, true, true)
         .filter(animation => (
             animation !== tl_to_use
-            && !isGsapDelayedCall(animation)
+            && !isInstantRootAnimation(animation)
         ));
 }
 
@@ -241,6 +284,7 @@ function initializeTimelineControl(captureDuration = null) {
         rootCount: recorded.rootCount,
     };
     initializeControlledTimelineAtZero(tl_to_use);
+    unfreezeAuthoredGsapRootAfterSnapshot();
     moverControlPrepared = false;
     moverPreparedAnimations = null;
     moverPreparedControlDuration = null;
@@ -281,6 +325,7 @@ function installTimelineForCapture(
     moverRecordedRootTimeline = null;
     moverRecordedRootInfo = null;
     initializeControlledTimelineAtZero(tl_to_use);
+    unfreezeAuthoredGsapRootAfterSnapshot();
     moverControlPrepared = false;
     moverPreparedAnimations = null;
     moverPreparedControlDuration = null;
@@ -295,6 +340,27 @@ function installTimelineForCapture(
         resumedChildren,
         disabledDevTools,
     };
+}
+
+function timelineRequiresRebuildBetweenCaptures(timeline = tl_to_use) {
+    if (!timeline) {
+        return false;
+    }
+    const animations = [
+        timeline,
+        ...(typeof timeline.getChildren === "function"
+            ? timeline.getChildren(true, true, true)
+            : []),
+    ];
+    return animations.some(animation => {
+        const value = animation.vars?.clearProps;
+        return (
+            value !== undefined
+            && value !== null
+            && value !== false
+            && value !== ""
+        );
+    });
 }
 
 function rebuildAnimationForCapture(
@@ -336,12 +402,18 @@ function rebuildAnimationForCapture(
         captureDuration,
     );
     const info = prepareTimelineForCapture();
-    return {selection, info};
+    return {
+        selection,
+        info,
+        requiresRebuildBetweenCaptures:
+            timelineRequiresRebuildBetweenCaptures(),
+    };
 }
 
 function seekControlledTimeline(time) {
     resumeControlledChildren(tl_to_use);
     tl_to_use.totalTime(time, false).pause();
+    assertRootDidNotAdvance();
     assertNoLateRootAnimations();
     assertPreparedTimelineStable();
     return tl_to_use;
@@ -855,6 +927,17 @@ function getBatchPageBackgroundState() {
     ]);
 }
 
+function isIdentityCssTransform(value) {
+    if (!value || value === "none") {
+        return true;
+    }
+    try {
+        return new DOMMatrixReadOnly(value).isIdentity;
+    } catch (_error) {
+        return false;
+    }
+}
+
 function getBatchCaptureSupport(
     frameWidth = null,
     frameHeight = null,
@@ -960,7 +1043,11 @@ function getBatchCaptureSupport(
             continue;
         }
         for (const target of animation.targets()) {
+            // Detached targets cannot paint. This support check runs before
+            // capture and after every synchronous seek, so a callback that
+            // reconnects one is rejected before its frame is cloned.
             if (target instanceof Element
+                && target.isConnected
                 && target !== source
                 && !source.contains(target)) {
                 return {
@@ -986,13 +1073,19 @@ function getBatchCaptureSupport(
 
     const sceneStyle = getComputedStyle(source);
     const unsupportedSceneStyle = [
-        ["transform", sceneStyle.transform, "none"],
-        ["filter", sceneStyle.filter, "none"],
-        ["mix-blend-mode", sceneStyle.mixBlendMode, "normal"],
-        ["opacity", sceneStyle.opacity, "1"],
-        ["clip-path", sceneStyle.clipPath, "none"],
-        ["mask-image", sceneStyle.maskImage, "none"],
-    ].find(([_name, value, supported]) => value && value !== supported);
+        ["transform", sceneStyle.transform, isIdentityCssTransform],
+        ["filter", sceneStyle.filter, value => value === "none"],
+        [
+            "mix-blend-mode",
+            sceneStyle.mixBlendMode,
+            value => value === "normal",
+        ],
+        ["opacity", sceneStyle.opacity, value => value === "1"],
+        ["clip-path", sceneStyle.clipPath, value => value === "none"],
+        ["mask-image", sceneStyle.maskImage, value => value === "none"],
+    ].find(([_name, value, isSupported]) => (
+        value && !isSupported(value)
+    ));
     if (unsupportedSceneStyle) {
         return {
             supported: false,

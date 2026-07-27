@@ -7,7 +7,10 @@ from pathlib import Path
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
-from mover.converter.mover_converter import convert_animation
+from mover.converter.mover_converter import (
+    convert_animation,
+    neutralize_gsdevtools,
+)
 
 
 ASSETS = (
@@ -137,6 +140,16 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         )
         return page
 
+    async def _load_page_without_vis(self, setup_script: str):
+        """Pages that embed convert.js directly, as external sources do."""
+        page = await self.browser.new_page()
+        await page.set_content(BASE_DOCUMENT)
+        await page.add_script_tag(path=str(GSAP_JS))
+        await page.add_script_tag(
+            content="\n".join((setup_script, CONVERT_SOURCE))
+        )
+        return page
+
     async def test_missing_prompt_loads_without_error_and_preserves_frames(
         self,
     ) -> None:
@@ -222,7 +235,7 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
                         && tl_to_use !== gsap.globalTimeline
                     ),
                     legacyPaused: tl.paused(),
-                    rootPaused: gsap.globalTimeline.paused(),
+                    rootTime: gsap.globalTimeline.totalTime(),
                 };
             }"""
         )
@@ -230,7 +243,13 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["selection"]["source"], "exported-root")
         self.assertTrue(result["usesWrapper"])
         self.assertFalse(result["legacyPaused"])
-        self.assertTrue(result["rootPaused"])
+        # Detached from the ticker, not paused, so assert non-advancement.
+        await page.wait_for_timeout(250)
+        self.assertAlmostEqual(
+            await page.evaluate("() => gsap.globalTimeline.totalTime()"),
+            result["rootTime"],
+            delta=0.001,
+        )
         for values in (
             result["firstValues"],
             result["secondValues"],
@@ -315,7 +334,7 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         await page.wait_for_timeout(75)
         playing = await page.evaluate(
             """() => ({
-                globalPaused: gsap.globalTimeline.paused(),
+                rootTime: gsap.globalTimeline.totalTime(),
                 parentIsNull: tl_to_use.parent === null,
                 time: tl_to_use.totalTime(),
                 unexpectedRoots: getUnexpectedRootAnimations().length,
@@ -338,7 +357,12 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
             }"""
         )
 
-        self.assertTrue(playing["globalPaused"])
+        # Root must not advance even while the preview loop drives tl_to_use.
+        self.assertAlmostEqual(
+            await page.evaluate("() => gsap.globalTimeline.totalTime()"),
+            playing["rootTime"],
+            delta=0.001,
+        )
         self.assertTrue(playing["parentIsNull"])
         self.assertGreater(playing["time"], 0)
         self.assertGreater(playing["value"], 0)
@@ -1083,6 +1107,216 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
             "Unsupported post-snapshot GSAP animation",
         ):
             await page.evaluate("prepareTimelineForCapture()")
+
+    async def test_callback_created_instant_set_is_tolerated(self) -> None:
+        """Capture must not reject the zero-duration tweens a callback gsap.set mints.
+
+        Does not check the write lands -- see ..._reaches_the_dom for that."""
+        page = await self._load_page(
+            """
+            window.setState = {value: 0};
+            window.renderCount = 0;
+            const sourceAnimation = gsap.timeline();
+            sourceAnimation.to(setState, {
+                value: 100,
+                duration: 1,
+                ease: "none",
+                onUpdate: () => {
+                    renderCount += 1;
+                    gsap.set(document.getElementById("selected"), {
+                        opacity: setState.value / 100,
+                    });
+                },
+            });
+            """
+        )
+
+        await page.evaluate("initializeTimelineControl()")
+        await page.evaluate("prepareTimelineForCapture()")
+        result = await page.evaluate(
+            """() => {
+                seekToTime(0.25);
+                seekToTime(0.5);
+                assertNoLateRootAnimations();
+                return {
+                    unexpectedRoots: getUnexpectedRootAnimations().length,
+                    value: setState.value,
+                    renderCount,
+                };
+            }"""
+        )
+
+        self.assertEqual(result["unexpectedRoots"], 0)
+        self.assertAlmostEqual(result["value"], 50, places=4)
+        self.assertGreater(result["renderCount"], 0)
+
+    async def test_callback_created_instant_set_reaches_the_dom(self) -> None:
+        """A gsap.set() from a timeline callback must reach the DOM on its own seek,
+        not one seek late."""
+        page = await self._load_page(
+            """
+            window.domSetState = {value: 0};
+            const writeTarget = document.getElementById("selected");
+            const sourceAnimation = gsap.timeline();
+            sourceAnimation.to(domSetState, {
+                value: 100,
+                duration: 1,
+                ease: "none",
+                onUpdate: () => gsap.set(
+                    writeTarget, {attr: {x: 5 + domSetState.value / 4}}
+                ),
+            });
+            """
+        )
+
+        await page.evaluate("initializeTimelineControl()")
+        await page.evaluate("prepareTimelineForCapture()")
+        seen = await page.evaluate(
+            """() => {
+                const target = document.getElementById("selected");
+                const out = [];
+                [0, 0.25, 0.5, 0.75, 1].forEach(time => {
+                    seekToTime(time);
+                    out.push(Number(target.getAttribute("x")));
+                });
+                return out;
+            }"""
+        )
+
+        # x is driven from the proxy as 5 + value/4, so the last seek must read 30.
+        self.assertGreaterEqual(len(set(seen)), 4, f"x never advanced: {seen}")
+        self.assertAlmostEqual(seen[-1], 30, delta=0.5)
+
+    async def test_gsdevtools_is_neutralized_before_it_touches_the_root(
+        self,
+    ) -> None:
+        """GSDevTools does its global setup at script load, so MoVer serves a
+        no-op in its place. The captured timeline must then hold only the
+        authored animation, at exactly the authored duration."""
+        page = await self.browser.new_page()
+        await neutralize_gsdevtools(page)
+        await page.set_content(BASE_DOCUMENT)
+        await page.add_script_tag(path=str(GSAP_JS))
+        # Resolves through the route, so the stub is what actually loads.
+        await page.add_script_tag(
+            url="https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/GSDevTools.min.js"
+        )
+        await page.add_script_tag(
+            content="\n".join(
+                (
+                    """
+                    window.authoredState = {value: 0};
+                    const tl = gsap.timeline();
+                    tl.to(
+                        authoredState,
+                        {value: 100, duration: 1.25, ease: "none"}
+                    );
+                    window.authoredDuration = tl.totalDuration();
+                    let tl_to_use = null;
+                    tl_to_use = tl;
+                    GSDevTools.create({animation: tl_to_use});
+                    """,
+                    CONVERT_SOURCE,
+                )
+            )
+        )
+
+        result = await page.evaluate(
+            """() => {
+                const selection = initializeTimelineControl();
+                return {
+                    authored: authoredDuration,
+                    duration: selection.duration,
+                    rootCount: selection.rootCount,
+                    scrubberInDom: !!document.querySelector(".gs-dev-tools"),
+                };
+            }"""
+        )
+
+        self.assertFalse(result["scrubberInDom"])
+        self.assertEqual(result["rootCount"], 1)
+        self.assertAlmostEqual(result["authored"], 1.25, places=4)
+        self.assertAlmostEqual(result["duration"], result["authored"], places=6)
+
+    async def test_vis_js_freezes_root_before_convert_js_loads(self) -> None:
+        """vis.js loads a script tag ahead of convert.js on pages that include it,
+        and the root keeps advancing across that gap. Dropping this pause cost
+        ~4% of exact-frame matches against the browser oracle."""
+        page = await self.browser.new_page()
+        await page.set_content(BASE_DOCUMENT)
+        await page.add_script_tag(path=str(GSAP_JS))
+        await page.add_script_tag(
+            content="""
+            window.gapState = {value: 0};
+            gsap.to(gapState, {value: 100, duration: 1, ease: "none"});
+            """
+        )
+        # vis.js only -- convert.js has deliberately not loaded yet.
+        await page.add_script_tag(content=VIS_SOURCE)
+
+        before = await page.evaluate("() => gsap.globalTimeline.time()")
+        await page.wait_for_timeout(250)
+        after = await page.evaluate(
+            """() => ({
+                paused: gsap.globalTimeline.paused(),
+                time: gsap.globalTimeline.time(),
+            })"""
+        )
+
+        self.assertTrue(after["paused"])
+        self.assertAlmostEqual(after["time"], before, delta=0.01)
+
+    async def test_root_is_frozen_at_load_without_vis_js(self) -> None:
+        """Capture must not depend on vis.js: pages that embed convert.js alone
+        still get the authored root frozen, so the captured set cannot drift."""
+        page = await self._load_page_without_vis(
+            """
+            window.frozenState = {value: 0};
+            gsap.to(frozenState, {value: 100, duration: 1, ease: "none"});
+            """
+        )
+
+        state = """() => ({
+            paused: gsap.globalTimeline.paused(),
+            autoRemoveChildren: gsap.globalTimeline.autoRemoveChildren,
+            snapshotDefined: typeof moverInitialRootSnapshot !== "undefined",
+            rootTime: gsap.globalTimeline.time(),
+            rootChildren:
+                gsap.globalTimeline.getChildren(false, true, true).length,
+        })"""
+        before = await page.evaluate(state)
+        await page.wait_for_timeout(300)
+        after = await page.evaluate(state)
+        selection = await page.evaluate("initializeTimelineControl()")
+
+        self.assertTrue(before["paused"])
+        self.assertFalse(before["autoRemoveChildren"])
+        self.assertFalse(before["snapshotDefined"])
+        # The root must not advance while waiting, so nothing is shed.
+        self.assertAlmostEqual(
+            after["rootTime"], before["rootTime"], delta=0.01
+        )
+        self.assertLess(after["rootTime"], 0.2)
+        self.assertEqual(after["rootChildren"], before["rootChildren"])
+        self.assertEqual(selection["rootCount"], 1)
+
+    async def test_root_advancing_during_capture_fails_loudly(self) -> None:
+        """A re-attached root renderer must abort capture, not silently drift."""
+        page = await self._load_page(
+            """
+            window.driftState = {value: 0};
+            gsap.to(driftState, {value: 100, duration: 1, ease: "none"});
+            """
+        )
+
+        await page.evaluate("initializeTimelineControl()")
+        await page.evaluate("prepareTimelineForCapture()")
+        await page.evaluate("seekToTime(0.25)")  # healthy seek first
+
+        await page.evaluate("() => gsap.ticker.add(gsap.updateRoot)")
+        await page.wait_for_timeout(250)
+        with self.assertRaisesRegex(PlaywrightError, "GSAP root advanced"):
+            await page.evaluate("seekToTime(0.5)")
 
     async def test_delayed_call_is_excluded_without_false_failure(self) -> None:
         page = await self._load_page(

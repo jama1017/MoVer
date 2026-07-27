@@ -557,10 +557,27 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
                 const source = document.querySelector("#source");
                 source.style.setProperty(
+                    "transform", "translate3d(0, 0, 0)", "important"
+                );
+                const identityTransform = getBatchCaptureSupport();
+                source.style.setProperty(
                     "transform", "translateX(1px)", "important"
                 );
                 const transform = getBatchCaptureSupport();
                 source.style.removeProperty("transform");
+
+                const rootEffects = {};
+                for (const [name, value] of [
+                    ["filter", "blur(1px)"],
+                    ["mix-blend-mode", "multiply"],
+                    ["opacity", "0.9"],
+                    ["clip-path", "inset(1px)"],
+                    ["mask-image", "linear-gradient(black, transparent)"],
+                ]) {
+                    source.style.setProperty(name, value, "important");
+                    rootEffects[name] = getBatchCaptureSupport();
+                    source.style.removeProperty(name);
+                }
 
                 source.setAttribute("viewBox", "0 0 20 20");
                 const letterboxing = getBatchCaptureSupport(80, 40);
@@ -575,6 +592,15 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 text.remove();
 
                 const originalGetChildren = tl_to_use.getChildren;
+                const detachedTarget = document.createElement("div");
+                tl_to_use.getChildren = () => [{
+                    targets: () => [detachedTarget],
+                }];
+                const detachedOutsideTarget = getBatchCaptureSupport();
+                document.body.appendChild(detachedTarget);
+                const connectedOutsideTarget = getBatchCaptureSupport();
+                detachedTarget.remove();
+
                 tl_to_use.getChildren = () => [{
                     targets: () => [document.body],
                 }];
@@ -583,23 +609,33 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                 return {
                     baseline,
                     background,
+                    identityTransform,
                     transform,
+                    rootEffects,
                     letterboxing,
                     textContent,
+                    detachedOutsideTarget,
+                    connectedOutsideTarget,
                     outsideTarget,
                 };
             }"""
         )
         self.assertTrue(results["baseline"]["supported"])
+        self.assertTrue(results["identityTransform"]["supported"])
+        self.assertTrue(results["detachedOutsideTarget"]["supported"])
         for name in (
             "background",
             "transform",
             "letterboxing",
             "textContent",
+            "connectedOutsideTarget",
             "outsideTarget",
         ):
             self.assertFalse(results[name]["supported"], name)
             self.assertTrue(results[name]["reason"])
+        for name, result in results["rootEffects"].items():
+            self.assertFalse(result["supported"], name)
+            self.assertIn(name, result["reason"])
 
     async def test_scale_one_capture_rejects_nonunit_dpr(self) -> None:
         page = await self.browser.new_page(device_scale_factor=2)

@@ -21,6 +21,7 @@ from mover.converter.mover_converter import (
     _get_bound_port,
     _normalize_capture_duration,
     _wait_for_server_start,
+    neutralize_gsdevtools,
 )
 
 
@@ -76,6 +77,7 @@ async def run_get_position(html_file: str, target_centroids: List[dict], element
             browser = await p.chromium.launch()
             try:
                 page = await browser.new_page()
+                await neutralize_gsdevtools(page)
                 await page.goto(
                     f"http://127.0.0.1:{actual_port}",
                     wait_until="networkidle",

@@ -10,8 +10,15 @@ import importlib.util
 import json
 import sys
 import tempfile
+import tomllib
 from importlib import resources
 from pathlib import Path
+
+
+def expected_version(repo_root: Path) -> str:
+    """Read the release version from pyproject.toml, the source of truth."""
+    with (repo_root / "pyproject.toml").open("rb") as handle:
+        return tomllib.load(handle)["project"]["version"]
 
 
 CONVERTER_ASSETS = {
@@ -46,9 +53,10 @@ def check_common(repo_root: Path) -> dict[str, object]:
         repo_root.resolve() not in package_root.parents,
         f"MoVer imported from source checkout: {package_root}",
     )
+    expected = expected_version(repo_root)
     require(
-        importlib.metadata.version("mover") == "0.3.1",
-        "Installed distribution is not mover 0.3.1",
+        importlib.metadata.version("mover") == expected,
+        f"Installed distribution is not mover {expected}",
     )
 
     converter_assets = resources.files("mover.converter").joinpath("assets")
