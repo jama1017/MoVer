@@ -2,7 +2,6 @@ import io
 import json
 import asyncio
 import argparse
-import importlib
 import math
 import tempfile
 import shutil
@@ -77,19 +76,6 @@ async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
         )
 
 
-def _load_opencv():
-    """Load the optional OpenCV MP4 fallback with an actionable error."""
-    try:
-        return importlib.import_module("cv2")
-    except ModuleNotFoundError as error:
-        if error.name != "cv2":
-            raise
-        raise RuntimeError(
-            "MP4 output requires FFmpeg or the optional OpenCV fallback. "
-            'Install FFmpeg or run: pip install "mover[media]"'
-        ) from error
-
-
 def _validate_nonempty_output(path: Path, output_format: str) -> None:
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError(
@@ -120,29 +106,13 @@ def _validate_ffmpeg_mp4(path: Path) -> None:
         raise RuntimeError(f"MP4 output could not be decoded: {path}") from error
 
 
-def _validate_mp4(path: Path, cv2_module=None) -> None:
-    """Raise when ``path`` is not a nonempty, decodable MP4."""
-    _validate_nonempty_output(path, "mp4")
-    cv2_module = cv2_module or _load_opencv()
-
-    capture = cv2_module.VideoCapture(str(path))
-    try:
-        if not capture.isOpened():
-            raise RuntimeError(f"MP4 output could not be opened: {path}")
-        decoded, frame = capture.read()
-        if not decoded or frame is None:
-            raise RuntimeError(f"MP4 output contains no decodable frame: {path}")
-    finally:
-        capture.release()
-
-
 def create_video_from_frames(
     frames: List[np.ndarray],
     output_path: str,
     fps: int = DEFAULT_FPS,
     output_format: str = "mp4",
 ) -> None:
-    """Create MP4/GIF output; GIF requires FFmpeg, MP4 can fall back to OpenCV."""
+    """Create MP4/GIF output. Both formats require FFmpeg."""
     if not frames:
         raise ValueError("No frames provided")
     if output_format not in VIDEO_OUTPUT_FORMATS:
@@ -154,8 +124,12 @@ def create_video_from_frames(
     except (subprocess.SubprocessError, FileNotFoundError):
         ffmpeg_available = False
 
-    if output_format == "gif" and not ffmpeg_available:
-        raise RuntimeError("GIF output requires a working FFmpeg installation")
+    if not ffmpeg_available:
+        raise RuntimeError(
+            f"{output_format.upper()} output requires a working FFmpeg "
+            "installation. Install it with your system package manager, e.g. "
+            "`apt install ffmpeg` or `brew install ffmpeg`."
+        )
 
     final_output_path = Path(output_path)
     final_output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,32 +207,15 @@ def create_video_from_frames(
                 _validate_ffmpeg_mp4(ffmpeg_output_path)
             ffmpeg_output_path.replace(final_output_path)
             return
-        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError):
+        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError) as error:
             ffmpeg_output_path.unlink(missing_ok=True)
             if output_format == "gif":
                 raise RuntimeError(
                     "GIF output requires FFmpeg with GIF palette support"
-                )
-
-    print("Using OpenCV MP4 output because FFmpeg conversion is unavailable")
-    cv2 = _load_opencv()
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    temp_mp4_path = final_output_path.with_suffix(".temp.mp4")
-    temp_mp4_path.unlink(missing_ok=True)
-    out = cv2.VideoWriter(str(temp_mp4_path), fourcc, fps, (width, height))
-    try:
-        if not out.isOpened():
-            raise RuntimeError("OpenCV could not initialize the MP4 writer")
-        for frame in normalized_frames:
-            out.write(frame)
-    except Exception:
-        temp_mp4_path.unlink(missing_ok=True)
-        raise
-    finally:
-        out.release()
-
-    _validate_mp4(temp_mp4_path, cv2)
-    temp_mp4_path.replace(final_output_path)
+                ) from error
+            raise RuntimeError(
+                f"FFmpeg failed to encode {output_format.upper()} output"
+            ) from error
 
 
 async def capture_frames_server_driven(
@@ -385,7 +342,14 @@ async def capture_frames_server_driven(
         ffmpeg_output_path.unlink(missing_ok=True)
         try:
             subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        except (subprocess.SubprocessError, FileNotFoundError) as error:
+            raise RuntimeError(
+                f"{output_format.upper()} output requires a working FFmpeg "
+                "installation. Install it with your system package manager, "
+                "e.g. `apt install ffmpeg` or `brew install ffmpeg`."
+            ) from error
 
+        try:
             if output_format == "gif":
                 subprocess.run([
                     'ffmpeg', '-y',
@@ -418,28 +382,9 @@ async def capture_frames_server_driven(
 
         except (subprocess.SubprocessError, FileNotFoundError, RuntimeError) as error:
             ffmpeg_output_path.unlink(missing_ok=True)
-            if output_format == "gif":
-                raise RuntimeError(
-                    "GIF output requires a working FFmpeg installation"
-                ) from error
-            print("ffmpeg not found, falling back to OpenCV encoding")
-            # Fallback: read frames back and use OpenCV
-            video_frames = []
-            for frame_index in range(capture_frame_count):
-                frame_path = frames_dir / f"frame_{frame_index:06d}.png"
-                img = Image.open(frame_path)
-                if img.mode != 'RGB':
-                    background = Image.new('RGB', img.size, (255, 255, 255))
-                    if img.mode == 'RGBA':
-                        background.paste(img, mask=img.split()[3])
-                    else:
-                        background.paste(img)
-                    img = background
-                video_frames.append(
-                    np.asarray(img, dtype=np.uint8)[:, :, ::-1].copy()
-                )
-            create_video_from_frames(video_frames, output_path, fps, output_format)
-            print(f"Video saved to {output_path} (OpenCV fallback)")
+            raise RuntimeError(
+                f"FFmpeg failed to encode {output_format.upper()} output"
+            ) from error
 
     finally:
         try:

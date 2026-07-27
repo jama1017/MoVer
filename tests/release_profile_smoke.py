@@ -122,7 +122,6 @@ def check_minimal() -> dict[str, object]:
 
 def check_full(repo_root: Path) -> dict[str, object]:
     required = (
-        "cv2",
         "groq",
         "jacinle",
         "jinja2",
