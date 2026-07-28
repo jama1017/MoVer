@@ -2,7 +2,6 @@ import io
 import json
 import asyncio
 import argparse
-import importlib
 import math
 import tempfile
 import shutil
@@ -17,6 +16,8 @@ from playwright.async_api import async_playwright, Page
 import subprocess
 from PIL import Image
 import uvicorn
+
+from mover.converter.raster_capture import AWAIT_PAINT_JS
 
 
 VIDEO_OUTPUT_FORMATS = {"mp4", "gif"}
@@ -77,19 +78,6 @@ async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
         )
 
 
-def _load_opencv():
-    """Load the optional OpenCV MP4 fallback with an actionable error."""
-    try:
-        return importlib.import_module("cv2")
-    except ModuleNotFoundError as error:
-        if error.name != "cv2":
-            raise
-        raise RuntimeError(
-            "MP4 output requires FFmpeg or the optional OpenCV fallback. "
-            'Install FFmpeg or run: pip install "mover[media]"'
-        ) from error
-
-
 def _validate_nonempty_output(path: Path, output_format: str) -> None:
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError(
@@ -120,20 +108,66 @@ def _validate_ffmpeg_mp4(path: Path) -> None:
         raise RuntimeError(f"MP4 output could not be decoded: {path}") from error
 
 
-def _validate_mp4(path: Path, cv2_module=None) -> None:
-    """Raise when ``path`` is not a nonempty, decodable MP4."""
-    _validate_nonempty_output(path, "mp4")
-    cv2_module = cv2_module or _load_opencv()
-
-    capture = cv2_module.VideoCapture(str(path))
+def _require_ffmpeg(output_format: str) -> None:
+    """Raise an actionable error when FFmpeg is unavailable."""
     try:
-        if not capture.isOpened():
-            raise RuntimeError(f"MP4 output could not be opened: {path}")
-        decoded, frame = capture.read()
-        if not decoded or frame is None:
-            raise RuntimeError(f"MP4 output contains no decodable frame: {path}")
-    finally:
-        capture.release()
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+    except (subprocess.SubprocessError, FileNotFoundError) as error:
+        raise RuntimeError(
+            f"{output_format.upper()} output requires a working FFmpeg "
+            "installation. Install it with your system package manager, e.g. "
+            "`apt install ffmpeg` or `brew install ffmpeg`."
+        ) from error
+
+
+def _ffmpeg_encode(
+    input_args: list[str],
+    output_path: Path,
+    fps: int,
+    output_format: str,
+    stdin_bytes: bytes | None = None,
+) -> None:
+    """Encode one video with FFmpeg, whatever the frame source."""
+    if output_format == "gif":
+        codec_args = [
+            "-vf",
+            (
+                f"fps={fps},split[s0][s1];"
+                "[s0]palettegen=stats_mode=diff[p];"
+                "[s1][p]paletteuse=dither=bayer:bayer_scale=5"
+            ),
+        ]
+    else:
+        codec_args = [
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+        ]
+
+    output_path.unlink(missing_ok=True)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", *input_args, *codec_args, str(output_path)],
+            input=stdin_bytes,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        if output_format == "gif":
+            _validate_nonempty_output(output_path, "gif")
+        else:
+            _validate_ffmpeg_mp4(output_path)
+    except (subprocess.SubprocessError, FileNotFoundError, RuntimeError) as error:
+        output_path.unlink(missing_ok=True)
+        if output_format == "gif":
+            raise RuntimeError(
+                "GIF output requires FFmpeg with GIF palette support"
+            ) from error
+        raise RuntimeError(
+            f"FFmpeg failed to encode {output_format.upper()} output"
+        ) from error
 
 
 def create_video_from_frames(
@@ -142,20 +176,12 @@ def create_video_from_frames(
     fps: int = DEFAULT_FPS,
     output_format: str = "mp4",
 ) -> None:
-    """Create MP4/GIF output; GIF requires FFmpeg, MP4 can fall back to OpenCV."""
+    """Create MP4/GIF output. Both formats require FFmpeg."""
     if not frames:
         raise ValueError("No frames provided")
     if output_format not in VIDEO_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported video output format: {output_format}")
-
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        ffmpeg_available = True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        ffmpeg_available = False
-
-    if output_format == "gif" and not ffmpeg_available:
-        raise RuntimeError("GIF output requires a working FFmpeg installation")
+    _require_ffmpeg(output_format)
 
     final_output_path = Path(output_path)
     final_output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,94 +197,23 @@ def create_video_from_frames(
     ):
         raise ValueError("All video frames must have the same HxWx3 shape")
 
-    if ffmpeg_available:
-        ffmpeg_output_path = final_output_path.with_suffix(
-            ".ffmpeg.gif" if output_format == "gif" else ".ffmpeg.mp4"
-        )
-        ffmpeg_output_path.unlink(missing_ok=True)
-        command = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "bgr24",
-            "-s",
-            f"{width}x{height}",
-            "-r",
-            str(fps),
-            "-i",
-            "-",
-        ]
-        if output_format == "gif":
-            command.extend(
-                [
-                    "-vf",
-                    (
-                        f"fps={fps},split[s0][s1];"
-                        "[s0]palettegen=stats_mode=diff[p];"
-                        "[s1][p]paletteuse=dither=bayer:bayer_scale=5"
-                    ),
-                ]
-            )
-        else:
-            command.extend(
-                [
-                    "-an",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "ultrafast",
-                    "-crf",
-                    "23",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-movflags",
-                    "+faststart",
-                ]
-            )
-        command.append(str(ffmpeg_output_path))
-
-        try:
-            subprocess.run(
-                command,
-                input=b"".join(frame.tobytes() for frame in normalized_frames),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-            if output_format == "gif":
-                _validate_nonempty_output(ffmpeg_output_path, "gif")
-            else:
-                _validate_ffmpeg_mp4(ffmpeg_output_path)
-            ffmpeg_output_path.replace(final_output_path)
-            return
-        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError):
-            ffmpeg_output_path.unlink(missing_ok=True)
-            if output_format == "gif":
-                raise RuntimeError(
-                    "GIF output requires FFmpeg with GIF palette support"
-                )
-
-    print("Using OpenCV MP4 output because FFmpeg conversion is unavailable")
-    cv2 = _load_opencv()
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    temp_mp4_path = final_output_path.with_suffix(".temp.mp4")
-    temp_mp4_path.unlink(missing_ok=True)
-    out = cv2.VideoWriter(str(temp_mp4_path), fourcc, fps, (width, height))
-    try:
-        if not out.isOpened():
-            raise RuntimeError("OpenCV could not initialize the MP4 writer")
-        for frame in normalized_frames:
-            out.write(frame)
-    except Exception:
-        temp_mp4_path.unlink(missing_ok=True)
-        raise
-    finally:
-        out.release()
-
-    _validate_mp4(temp_mp4_path, cv2)
-    temp_mp4_path.replace(final_output_path)
+    ffmpeg_output_path = final_output_path.with_suffix(
+        ".ffmpeg.gif" if output_format == "gif" else ".ffmpeg.mp4"
+    )
+    _ffmpeg_encode(
+        [
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{width}x{height}",
+            "-r", str(fps),
+            "-i", "-",
+        ],
+        ffmpeg_output_path,
+        fps,
+        output_format,
+        stdin_bytes=b"".join(frame.tobytes() for frame in normalized_frames),
+    )
+    ffmpeg_output_path.replace(final_output_path)
 
 
 async def capture_frames_server_driven(
@@ -266,18 +221,15 @@ async def capture_frames_server_driven(
     output_path: str,
     fps: int = DEFAULT_FPS,
     output_format: str = "mp4",
-    in_memory: bool = False,
     hide_grid: bool = False,
     capture_duration: float | None = None,
-) -> None | tuple[list[np.ndarray | io.StringIO], float]:
+) -> None:
     """
     Server-driven frame capture: Python controls the timeline and screenshots.
     Video/GIF frames are streamed through a temp directory; PNG/SVG outputs
-    are saved as per-frame files in a directory. In-memory PNG/SVG capture
-    returns ``(frames, duration)`` without creating, modifying, or deleting
-    filesystem output. ``hide_grid`` suppresses the SVG grid only in raster
-    screenshots and does not mutate the page's persistent styles. GIF output
-    requires a working FFmpeg installation.
+    are saved as per-frame files in a directory. ``hide_grid`` suppresses the
+    SVG grid only in raster screenshots and does not mutate the page's
+    persistent styles. GIF output requires a working FFmpeg installation.
 
     Call this at most once per page load. A capture leaves element state at the
     final frame and only the timeline time is restored, so a second pass silently
@@ -288,8 +240,6 @@ async def capture_frames_server_driven(
         raise ValueError("fps must be positive")
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported output format: {output_format}")
-    if in_memory and output_format not in FRAME_OUTPUT_FORMATS:
-        raise ValueError("in_memory=True is only supported for PNG and SVG output")
     normalized_capture_duration = _normalize_capture_duration(capture_duration)
 
     ## Get animation info from the page using the same FPS used for seeking.
@@ -311,24 +261,21 @@ async def capture_frames_server_driven(
     svg_element = page.locator("svg").first
     await svg_element.wait_for(state="visible")
 
-    in_memory_frames: list[np.ndarray | io.StringIO] = []
+    output_target = Path(output_path)
     frames_dir: Path | None = None
-    cleanup_temp_dir = False
-    if not in_memory:
-        output_target = Path(output_path)
-        cleanup_temp_dir = output_format in VIDEO_OUTPUT_FORMATS
-        if cleanup_temp_dir:
-            output_target.parent.mkdir(parents=True, exist_ok=True)
-            frames_dir = Path(tempfile.mkdtemp(prefix="mover_frames_"))
-        else:
-            frames_dir = output_target
-            if frames_dir.suffix.lower() == f".{output_format}":
-                frames_dir = frames_dir.with_suffix("")
-            if frames_dir.exists() and not frames_dir.is_dir():
-                raise ValueError(f"Frame output path exists and is not a directory: {frames_dir}")
-            frames_dir.mkdir(parents=True, exist_ok=True)
-            for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
-                existing_frame.unlink()
+    cleanup_temp_dir = output_format in VIDEO_OUTPUT_FORMATS
+    if cleanup_temp_dir:
+        output_target.parent.mkdir(parents=True, exist_ok=True)
+        frames_dir = Path(tempfile.mkdtemp(prefix="mover_frames_"))
+    else:
+        frames_dir = output_target
+        if frames_dir.suffix.lower() == f".{output_format}":
+            frames_dir = frames_dir.with_suffix("")
+        if frames_dir.exists() and not frames_dir.is_dir():
+            raise ValueError(f"Frame output path exists and is not a directory: {frames_dir}")
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
+            existing_frame.unlink()
 
     capture_started = False
     try:
@@ -336,9 +283,7 @@ async def capture_frames_server_driven(
         for frame_index in range(capture_frame_count):
             await page.evaluate(f"() => seekToFrame({frame_index}, {fps}, {duration})")
 
-            await page.evaluate(
-                "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
-            )
+            await page.evaluate(AWAIT_PAINT_JS)
             await page.evaluate("assertNoLateRootAnimations()")
 
             if output_format == "svg":
@@ -347,29 +292,19 @@ async def capture_frames_server_driven(
                     if (!svg) throw new Error("No SVG element found");
                     return new XMLSerializer().serializeToString(svg);
                 }""")
-                if in_memory:
-                    in_memory_frames.append(io.StringIO(f"{svg_markup}\n"))
-                else:
-                    assert frames_dir is not None
-                    frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
-                    frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
+                assert frames_dir is not None
+                frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
+                frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
             else:
                 png_bytes = await _capture_svg_png(svg_element, hide_grid)
 
-                if in_memory:
-                    img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                    in_memory_frames.append(np.asarray(img, dtype=np.float32) / 255.0)
-                else:
-                    assert frames_dir is not None
-                    frame_path = frames_dir / f"frame_{frame_index:06d}.png"
-                    with open(frame_path, "wb") as f:
-                        f.write(png_bytes)
+                assert frames_dir is not None
+                frame_path = frames_dir / f"frame_{frame_index:06d}.png"
+                with open(frame_path, "wb") as f:
+                    f.write(png_bytes)
 
             if (frame_index + 1) % max(1, capture_frame_count // 10) == 0 or frame_index == capture_frame_count - 1:
                 print(f"  Captured frame {frame_index + 1}/{capture_frame_count}")
-
-        if in_memory:
-            return in_memory_frames, duration
 
         if output_format in FRAME_OUTPUT_FORMATS:
             assert frames_dir is not None
@@ -378,68 +313,19 @@ async def capture_frames_server_driven(
 
         ## Encode video using FFmpeg directly from image sequence.
         assert frames_dir is not None
+        _require_ffmpeg(output_format)
         final_output_path = Path(output_path)
         ffmpeg_output_path = final_output_path.with_suffix(
-            '.ffmpeg.gif' if output_format == "gif" else '.ffmpeg.mp4'
+            ".ffmpeg.gif" if output_format == "gif" else ".ffmpeg.mp4"
         )
-        ffmpeg_output_path.unlink(missing_ok=True)
-        try:
-            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-
-            if output_format == "gif":
-                subprocess.run([
-                    'ffmpeg', '-y',
-                    '-framerate', str(fps),
-                    '-i', str(frames_dir / 'frame_%06d.png'),
-                    '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
-                    str(ffmpeg_output_path)
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                if (
-                    not ffmpeg_output_path.is_file()
-                    or ffmpeg_output_path.stat().st_size == 0
-                ):
-                    raise RuntimeError("FFmpeg produced an empty GIF")
-            else:
-                subprocess.run([
-                    'ffmpeg', '-y',
-                    '-framerate', str(fps),
-                    '-i', str(frames_dir / 'frame_%06d.png'),
-                    '-c:v', 'libx264',
-                    '-preset', 'ultrafast',
-                    '-crf', '23',
-                    '-pix_fmt', 'yuv420p',
-                    '-movflags', '+faststart',
-                    str(ffmpeg_output_path)
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                _validate_ffmpeg_mp4(ffmpeg_output_path)
-
-            ffmpeg_output_path.replace(final_output_path)
-            print(f"Video saved to {output_path}")
-
-        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError) as error:
-            ffmpeg_output_path.unlink(missing_ok=True)
-            if output_format == "gif":
-                raise RuntimeError(
-                    "GIF output requires a working FFmpeg installation"
-                ) from error
-            print("ffmpeg not found, falling back to OpenCV encoding")
-            # Fallback: read frames back and use OpenCV
-            video_frames = []
-            for frame_index in range(capture_frame_count):
-                frame_path = frames_dir / f"frame_{frame_index:06d}.png"
-                img = Image.open(frame_path)
-                if img.mode != 'RGB':
-                    background = Image.new('RGB', img.size, (255, 255, 255))
-                    if img.mode == 'RGBA':
-                        background.paste(img, mask=img.split()[3])
-                    else:
-                        background.paste(img)
-                    img = background
-                video_frames.append(
-                    np.asarray(img, dtype=np.uint8)[:, :, ::-1].copy()
-                )
-            create_video_from_frames(video_frames, output_path, fps, output_format)
-            print(f"Video saved to {output_path} (OpenCV fallback)")
+        _ffmpeg_encode(
+            ["-framerate", str(fps), "-i", str(frames_dir / "frame_%06d.png")],
+            ffmpeg_output_path,
+            fps,
+            output_format,
+        )
+        ffmpeg_output_path.replace(final_output_path)
+        print(f"Video saved to {output_path}")
 
     finally:
         try:
