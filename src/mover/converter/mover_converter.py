@@ -17,6 +17,8 @@ import subprocess
 from PIL import Image
 import uvicorn
 
+from mover.converter.raster_capture import AWAIT_PAINT_JS
+
 
 VIDEO_OUTPUT_FORMATS = {"mp4", "gif"}
 FRAME_OUTPUT_FORMATS = {"png", "svg"}
@@ -106,6 +108,68 @@ def _validate_ffmpeg_mp4(path: Path) -> None:
         raise RuntimeError(f"MP4 output could not be decoded: {path}") from error
 
 
+def _require_ffmpeg(output_format: str) -> None:
+    """Raise an actionable error when FFmpeg is unavailable."""
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+    except (subprocess.SubprocessError, FileNotFoundError) as error:
+        raise RuntimeError(
+            f"{output_format.upper()} output requires a working FFmpeg "
+            "installation. Install it with your system package manager, e.g. "
+            "`apt install ffmpeg` or `brew install ffmpeg`."
+        ) from error
+
+
+def _ffmpeg_encode(
+    input_args: list[str],
+    output_path: Path,
+    fps: int,
+    output_format: str,
+    stdin_bytes: bytes | None = None,
+) -> None:
+    """Encode one video with FFmpeg, whatever the frame source."""
+    if output_format == "gif":
+        codec_args = [
+            "-vf",
+            (
+                f"fps={fps},split[s0][s1];"
+                "[s0]palettegen=stats_mode=diff[p];"
+                "[s1][p]paletteuse=dither=bayer:bayer_scale=5"
+            ),
+        ]
+    else:
+        codec_args = [
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+        ]
+
+    output_path.unlink(missing_ok=True)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", *input_args, *codec_args, str(output_path)],
+            input=stdin_bytes,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        if output_format == "gif":
+            _validate_nonempty_output(output_path, "gif")
+        else:
+            _validate_ffmpeg_mp4(output_path)
+    except (subprocess.SubprocessError, FileNotFoundError, RuntimeError) as error:
+        output_path.unlink(missing_ok=True)
+        if output_format == "gif":
+            raise RuntimeError(
+                "GIF output requires FFmpeg with GIF palette support"
+            ) from error
+        raise RuntimeError(
+            f"FFmpeg failed to encode {output_format.upper()} output"
+        ) from error
+
+
 def create_video_from_frames(
     frames: List[np.ndarray],
     output_path: str,
@@ -117,19 +181,7 @@ def create_video_from_frames(
         raise ValueError("No frames provided")
     if output_format not in VIDEO_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported video output format: {output_format}")
-
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        ffmpeg_available = True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        ffmpeg_available = False
-
-    if not ffmpeg_available:
-        raise RuntimeError(
-            f"{output_format.upper()} output requires a working FFmpeg "
-            "installation. Install it with your system package manager, e.g. "
-            "`apt install ffmpeg` or `brew install ffmpeg`."
-        )
+    _require_ffmpeg(output_format)
 
     final_output_path = Path(output_path)
     final_output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,77 +197,23 @@ def create_video_from_frames(
     ):
         raise ValueError("All video frames must have the same HxWx3 shape")
 
-    if ffmpeg_available:
-        ffmpeg_output_path = final_output_path.with_suffix(
-            ".ffmpeg.gif" if output_format == "gif" else ".ffmpeg.mp4"
-        )
-        ffmpeg_output_path.unlink(missing_ok=True)
-        command = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "bgr24",
-            "-s",
-            f"{width}x{height}",
-            "-r",
-            str(fps),
-            "-i",
-            "-",
-        ]
-        if output_format == "gif":
-            command.extend(
-                [
-                    "-vf",
-                    (
-                        f"fps={fps},split[s0][s1];"
-                        "[s0]palettegen=stats_mode=diff[p];"
-                        "[s1][p]paletteuse=dither=bayer:bayer_scale=5"
-                    ),
-                ]
-            )
-        else:
-            command.extend(
-                [
-                    "-an",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "ultrafast",
-                    "-crf",
-                    "23",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-movflags",
-                    "+faststart",
-                ]
-            )
-        command.append(str(ffmpeg_output_path))
-
-        try:
-            subprocess.run(
-                command,
-                input=b"".join(frame.tobytes() for frame in normalized_frames),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-            if output_format == "gif":
-                _validate_nonempty_output(ffmpeg_output_path, "gif")
-            else:
-                _validate_ffmpeg_mp4(ffmpeg_output_path)
-            ffmpeg_output_path.replace(final_output_path)
-            return
-        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError) as error:
-            ffmpeg_output_path.unlink(missing_ok=True)
-            if output_format == "gif":
-                raise RuntimeError(
-                    "GIF output requires FFmpeg with GIF palette support"
-                ) from error
-            raise RuntimeError(
-                f"FFmpeg failed to encode {output_format.upper()} output"
-            ) from error
+    ffmpeg_output_path = final_output_path.with_suffix(
+        ".ffmpeg.gif" if output_format == "gif" else ".ffmpeg.mp4"
+    )
+    _ffmpeg_encode(
+        [
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{width}x{height}",
+            "-r", str(fps),
+            "-i", "-",
+        ],
+        ffmpeg_output_path,
+        fps,
+        output_format,
+        stdin_bytes=b"".join(frame.tobytes() for frame in normalized_frames),
+    )
+    ffmpeg_output_path.replace(final_output_path)
 
 
 async def capture_frames_server_driven(
@@ -293,9 +291,7 @@ async def capture_frames_server_driven(
         for frame_index in range(capture_frame_count):
             await page.evaluate(f"() => seekToFrame({frame_index}, {fps}, {duration})")
 
-            await page.evaluate(
-                "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
-            )
+            await page.evaluate(AWAIT_PAINT_JS)
             await page.evaluate("assertNoLateRootAnimations()")
 
             if output_format == "svg":
@@ -335,56 +331,19 @@ async def capture_frames_server_driven(
 
         ## Encode video using FFmpeg directly from image sequence.
         assert frames_dir is not None
+        _require_ffmpeg(output_format)
         final_output_path = Path(output_path)
         ffmpeg_output_path = final_output_path.with_suffix(
-            '.ffmpeg.gif' if output_format == "gif" else '.ffmpeg.mp4'
+            ".ffmpeg.gif" if output_format == "gif" else ".ffmpeg.mp4"
         )
-        ffmpeg_output_path.unlink(missing_ok=True)
-        try:
-            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        except (subprocess.SubprocessError, FileNotFoundError) as error:
-            raise RuntimeError(
-                f"{output_format.upper()} output requires a working FFmpeg "
-                "installation. Install it with your system package manager, "
-                "e.g. `apt install ffmpeg` or `brew install ffmpeg`."
-            ) from error
-
-        try:
-            if output_format == "gif":
-                subprocess.run([
-                    'ffmpeg', '-y',
-                    '-framerate', str(fps),
-                    '-i', str(frames_dir / 'frame_%06d.png'),
-                    '-vf', f'fps={fps},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
-                    str(ffmpeg_output_path)
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                if (
-                    not ffmpeg_output_path.is_file()
-                    or ffmpeg_output_path.stat().st_size == 0
-                ):
-                    raise RuntimeError("FFmpeg produced an empty GIF")
-            else:
-                subprocess.run([
-                    'ffmpeg', '-y',
-                    '-framerate', str(fps),
-                    '-i', str(frames_dir / 'frame_%06d.png'),
-                    '-c:v', 'libx264',
-                    '-preset', 'ultrafast',
-                    '-crf', '23',
-                    '-pix_fmt', 'yuv420p',
-                    '-movflags', '+faststart',
-                    str(ffmpeg_output_path)
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                _validate_ffmpeg_mp4(ffmpeg_output_path)
-
-            ffmpeg_output_path.replace(final_output_path)
-            print(f"Video saved to {output_path}")
-
-        except (subprocess.SubprocessError, FileNotFoundError, RuntimeError) as error:
-            ffmpeg_output_path.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"FFmpeg failed to encode {output_format.upper()} output"
-            ) from error
+        _ffmpeg_encode(
+            ["-framerate", str(fps), "-i", str(frames_dir / "frame_%06d.png")],
+            ffmpeg_output_path,
+            fps,
+            output_format,
+        )
+        ffmpeg_output_path.replace(final_output_path)
+        print(f"Video saved to {output_path}")
 
     finally:
         try:

@@ -18,6 +18,11 @@ RASTER_CAPTURE_STRATEGIES = {"batched", "sequential"}
 MAX_BATCH_FRAMES = 100
 MAX_SCREENSHOT_DIMENSION = 16_000
 MAX_SCREENSHOT_PIXELS = 8_000_000
+## Two frames, so the browser has painted the seek before we screenshot.
+AWAIT_PAINT_JS = (
+    "() => new Promise(resolve => requestAnimationFrame(() => "
+    "requestAnimationFrame(resolve)))"
+)
 
 
 class BatchCaptureError(RuntimeError):
@@ -205,10 +210,7 @@ async def _capture_sequential(
         dimensions_set = True
         for seek_time in seek_times:
             await page.evaluate("time => seekToTime(time)", seek_time)
-            await page.evaluate(
-                "() => new Promise(resolve => requestAnimationFrame(() => "
-                "requestAnimationFrame(resolve)))"
-            )
+            await page.evaluate(AWAIT_PAINT_JS)
             await page.evaluate("assertNoLateRootAnimations()")
             if hide_grid:
                 frame_style = await scene.get_attribute("style")
@@ -364,10 +366,7 @@ async def _capture_batched(
                     raise BatchCaptureError(
                         f"browser appended {appended} frames; expected {len(chunk)}"
                     )
-                await page.evaluate(
-                    "() => new Promise(resolve => requestAnimationFrame(() => "
-                    "requestAnimationFrame(resolve)))"
-                )
+                await page.evaluate(AWAIT_PAINT_JS)
                 await page.evaluate("assertNoLateRootAnimations()")
                 geometry = await page.evaluate("getBatchCaptureGeometry()")
                 crop_boxes = _validate_batch_geometry(

@@ -10,10 +10,6 @@ import asyncio
 import argparse
 from typing import List
 from pathlib import Path
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 import uvicorn
 
@@ -22,32 +18,8 @@ from mover.converter.mover_converter import (
     _normalize_capture_duration,
     _wait_for_server_start,
     neutralize_gsdevtools,
+    setup_fastapi_app,
 )
-
-
-def setup_fastapi_app(html_file: str, html_dir: str, base_name: str) -> FastAPI:
-    """Set up and configure a minimal FastAPI application for position querying."""
-    app = FastAPI()
-
-    # Add CORS middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    @app.get("/")
-    async def serve_html():
-        """Serve the HTML file."""
-        return FileResponse(html_file)
-
-    # Mount the assets directory at root to allow relative path access
-    assets_path = Path(__file__).parent / "assets"
-    app.mount("/", StaticFiles(directory=str(assets_path)), name="assets")
-
-    return app
 
 
 async def run_get_position(html_file: str, target_centroids: List[dict], element_id: str, tolerance: float, port: int, capture_duration: float | None = None) -> List[List[dict]]:
