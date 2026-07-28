@@ -1248,15 +1248,14 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         initial_state = await self.page.evaluate(snapshot_js)
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            frames, duration = await capture_frames_server_driven(
+            frame_dir = Path(temp_dir) / "frames"
+            await capture_frames_server_driven(
                 self.page,
-                str(Path(temp_dir) / "unused"),
+                str(frame_dir),
                 fps=2,
                 output_format="svg",
-                in_memory=True,
             )
-        self.assertEqual(duration, 1)
-        self.assertEqual(len(frames), 3)
+            self.assertEqual(len(sorted(frame_dir.glob("frame_*.svg"))), 3)
         self.assertEqual(await self.page.evaluate(snapshot_js), initial_state)
 
         await self.page.evaluate(
@@ -1279,7 +1278,6 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
                     str(Path(temp_dir) / "unused"),
                     fps=2,
                     output_format="svg",
-                    in_memory=True,
                 )
         self.assertEqual(await self.page.evaluate(snapshot_js), failure_state)
         await self.page.evaluate(
@@ -1287,57 +1285,34 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_real_browser_server_capture_and_grid_suppression(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            default_output = Path(temp_dir) / "default" / "frames"
-            default_frames, default_duration = await capture_frames_server_driven(
-                self.page,
-                str(default_output),
-                fps=1,
-                output_format="png",
-                in_memory=True,
+        def corner_pixel(path: Path) -> tuple[int, int, int]:
+            frame = (
+                np.asarray(Image.open(path).convert("RGBA"), dtype=np.float32) / 255.0
             )
-            hidden_output = Path(temp_dir) / "hidden" / "frames"
-            hidden_frames, hidden_duration = await capture_frames_server_driven(
+            return tuple(round(float(channel) * 255) for channel in frame[0, 0, :3])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            default_output = Path(temp_dir) / "default"
+            await capture_frames_server_driven(
+                self.page, str(default_output), fps=1, output_format="png"
+            )
+            hidden_output = Path(temp_dir) / "hidden"
+            await capture_frames_server_driven(
                 self.page,
                 str(hidden_output),
                 fps=1,
                 output_format="png",
-                in_memory=True,
                 hide_grid=True,
             )
-            disk_png_output = Path(temp_dir) / "disk-png"
-            await capture_frames_server_driven(
-                self.page,
-                str(disk_png_output),
-                fps=1,
-                output_format="png",
-            )
 
-            self.assertEqual(default_duration, 1)
-            self.assertEqual(hidden_duration, 1)
-            self.assertEqual(len(default_frames), 2)
-            self.assertEqual(len(hidden_frames), 2)
-            self.assertFalse(default_output.parent.exists())
-            self.assertFalse(hidden_output.parent.exists())
-            disk_png_paths = sorted(disk_png_output.glob("frame_*.png"))
-            self.assertEqual(len(disk_png_paths), 2)
-            for memory_frame, disk_path in zip(default_frames, disk_png_paths):
-                disk_frame = (
-                    np.asarray(Image.open(disk_path).convert("RGBA"), dtype=np.float32)
-                    / 255.0
-                )
-                np.testing.assert_array_equal(memory_frame, disk_frame)
+            default_paths = sorted(default_output.glob("frame_*.png"))
+            hidden_paths = sorted(hidden_output.glob("frame_*.png"))
+            self.assertEqual(len(default_paths), 2)
+            self.assertEqual(len(hidden_paths), 2)
 
-            default_pixel = tuple(
-                round(float(channel) * 255)
-                for channel in default_frames[0][0, 0, :3]
-            )
-            hidden_pixel = tuple(
-                round(float(channel) * 255)
-                for channel in hidden_frames[0][0, 0, :3]
-            )
-            self.assertEqual(default_pixel, (255, 0, 0))
-            self.assertEqual(hidden_pixel, (255, 255, 255))
+            ## hide_grid suppresses the grid in the screenshot only; the page keeps it.
+            self.assertEqual(corner_pixel(default_paths[0]), (255, 0, 0))
+            self.assertEqual(corner_pixel(hidden_paths[0]), (255, 255, 255))
             self.assertIn(
                 "linear-gradient",
                 await self.page.locator("body > svg").evaluate(
@@ -1347,26 +1322,10 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
 
             disk_svg_output = Path(temp_dir) / "disk-svg"
             await capture_frames_server_driven(
-                self.page,
-                str(disk_svg_output),
-                fps=1,
-                output_format="svg",
+                self.page, str(disk_svg_output), fps=1, output_format="svg"
             )
-            memory_svg_output = Path(temp_dir) / "missing-svg" / "frames"
-            memory_svg_frames, svg_duration = await capture_frames_server_driven(
-                self.page,
-                str(memory_svg_output),
-                fps=1,
-                output_format="svg",
-                in_memory=True,
-            )
-            self.assertEqual(svg_duration, 1)
-            self.assertFalse(memory_svg_output.parent.exists())
-            disk_svg_paths = sorted(disk_svg_output.glob("frame_*.svg"))
-            self.assertEqual(len(disk_svg_paths), 2)
-            self.assertEqual(
-                [frame.getvalue() for frame in memory_svg_frames],
-                [path.read_text() for path in disk_svg_paths],
-            )
+            self.assertEqual(len(sorted(disk_svg_output.glob("frame_*.svg"))), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

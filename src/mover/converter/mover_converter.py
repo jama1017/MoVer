@@ -221,18 +221,15 @@ async def capture_frames_server_driven(
     output_path: str,
     fps: int = DEFAULT_FPS,
     output_format: str = "mp4",
-    in_memory: bool = False,
     hide_grid: bool = False,
     capture_duration: float | None = None,
-) -> None | tuple[list[np.ndarray | io.StringIO], float]:
+) -> None:
     """
     Server-driven frame capture: Python controls the timeline and screenshots.
     Video/GIF frames are streamed through a temp directory; PNG/SVG outputs
-    are saved as per-frame files in a directory. In-memory PNG/SVG capture
-    returns ``(frames, duration)`` without creating, modifying, or deleting
-    filesystem output. ``hide_grid`` suppresses the SVG grid only in raster
-    screenshots and does not mutate the page's persistent styles. GIF output
-    requires a working FFmpeg installation.
+    are saved as per-frame files in a directory. ``hide_grid`` suppresses the
+    SVG grid only in raster screenshots and does not mutate the page's
+    persistent styles. GIF output requires a working FFmpeg installation.
 
     Call this at most once per page load. A capture leaves element state at the
     final frame and only the timeline time is restored, so a second pass silently
@@ -243,8 +240,6 @@ async def capture_frames_server_driven(
         raise ValueError("fps must be positive")
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported output format: {output_format}")
-    if in_memory and output_format not in FRAME_OUTPUT_FORMATS:
-        raise ValueError("in_memory=True is only supported for PNG and SVG output")
     normalized_capture_duration = _normalize_capture_duration(capture_duration)
 
     ## Get animation info from the page using the same FPS used for seeking.
@@ -266,24 +261,21 @@ async def capture_frames_server_driven(
     svg_element = page.locator("svg").first
     await svg_element.wait_for(state="visible")
 
-    in_memory_frames: list[np.ndarray | io.StringIO] = []
+    output_target = Path(output_path)
     frames_dir: Path | None = None
-    cleanup_temp_dir = False
-    if not in_memory:
-        output_target = Path(output_path)
-        cleanup_temp_dir = output_format in VIDEO_OUTPUT_FORMATS
-        if cleanup_temp_dir:
-            output_target.parent.mkdir(parents=True, exist_ok=True)
-            frames_dir = Path(tempfile.mkdtemp(prefix="mover_frames_"))
-        else:
-            frames_dir = output_target
-            if frames_dir.suffix.lower() == f".{output_format}":
-                frames_dir = frames_dir.with_suffix("")
-            if frames_dir.exists() and not frames_dir.is_dir():
-                raise ValueError(f"Frame output path exists and is not a directory: {frames_dir}")
-            frames_dir.mkdir(parents=True, exist_ok=True)
-            for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
-                existing_frame.unlink()
+    cleanup_temp_dir = output_format in VIDEO_OUTPUT_FORMATS
+    if cleanup_temp_dir:
+        output_target.parent.mkdir(parents=True, exist_ok=True)
+        frames_dir = Path(tempfile.mkdtemp(prefix="mover_frames_"))
+    else:
+        frames_dir = output_target
+        if frames_dir.suffix.lower() == f".{output_format}":
+            frames_dir = frames_dir.with_suffix("")
+        if frames_dir.exists() and not frames_dir.is_dir():
+            raise ValueError(f"Frame output path exists and is not a directory: {frames_dir}")
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        for existing_frame in frames_dir.glob(f"frame_*.{output_format}"):
+            existing_frame.unlink()
 
     capture_started = False
     try:
@@ -300,29 +292,19 @@ async def capture_frames_server_driven(
                     if (!svg) throw new Error("No SVG element found");
                     return new XMLSerializer().serializeToString(svg);
                 }""")
-                if in_memory:
-                    in_memory_frames.append(io.StringIO(f"{svg_markup}\n"))
-                else:
-                    assert frames_dir is not None
-                    frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
-                    frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
+                assert frames_dir is not None
+                frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
+                frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
             else:
                 png_bytes = await _capture_svg_png(svg_element, hide_grid)
 
-                if in_memory:
-                    img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                    in_memory_frames.append(np.asarray(img, dtype=np.float32) / 255.0)
-                else:
-                    assert frames_dir is not None
-                    frame_path = frames_dir / f"frame_{frame_index:06d}.png"
-                    with open(frame_path, "wb") as f:
-                        f.write(png_bytes)
+                assert frames_dir is not None
+                frame_path = frames_dir / f"frame_{frame_index:06d}.png"
+                with open(frame_path, "wb") as f:
+                    f.write(png_bytes)
 
             if (frame_index + 1) % max(1, capture_frame_count // 10) == 0 or frame_index == capture_frame_count - 1:
                 print(f"  Captured frame {frame_index + 1}/{capture_frame_count}")
-
-        if in_memory:
-            return in_memory_frames, duration
 
         if output_format in FRAME_OUTPUT_FORMATS:
             assert frames_dir is not None

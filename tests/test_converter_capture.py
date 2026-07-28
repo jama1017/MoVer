@@ -111,68 +111,6 @@ class FakePage:
 
 
 class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
-    async def test_in_memory_png_returns_frames_and_duration_without_disk_io(self) -> None:
-        page = FakePage()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "missing" / "frames"
-            frames, duration = await capture_frames_server_driven(
-                page,
-                str(output_path),
-                fps=30,
-                output_format="png",
-                in_memory=True,
-            )
-
-            self.assertEqual(duration, 1.25)
-            self.assertEqual(len(frames), 2)
-            self.assertFalse(output_path.parent.exists())
-            self.assertEqual(page.svg_locator.screenshot_calls, [{"type": "png"}] * 2)
-            for frame in frames:
-                self.assertIsInstance(frame, np.ndarray)
-                self.assertEqual(frame.shape, (1, 2, 4))
-                self.assertEqual(frame.dtype, np.float32)
-
-    async def test_in_memory_svg_matches_disk_text_without_disk_io(self) -> None:
-        page = FakePage()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "missing" / "frames"
-            frames, duration = await capture_frames_server_driven(
-                page,
-                str(output_path),
-                fps=30,
-                output_format="svg",
-                in_memory=True,
-            )
-
-            self.assertEqual(duration, 1.25)
-            self.assertEqual(len(frames), 2)
-            self.assertFalse(output_path.parent.exists())
-            self.assertEqual(page.svg_locator.screenshot_calls, [])
-            for frame in frames:
-                self.assertIsInstance(frame, io.StringIO)
-                self.assertEqual(
-                    frame.getvalue(),
-                    '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
-                )
-
-    async def test_in_memory_video_is_rejected_before_browser_or_disk_work(self) -> None:
-        page = FakePage()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "missing" / "animation.mp4"
-            with self.assertRaisesRegex(ValueError, "only supported for PNG and SVG"):
-                await capture_frames_server_driven(
-                    page,
-                    str(output_path),
-                    output_format="mp4",
-                    in_memory=True,
-                )
-
-            self.assertEqual(page.evaluate_calls, [])
-            self.assertFalse(output_path.parent.exists())
-
     async def test_invalid_capture_duration_is_rejected_before_page_work(self) -> None:
         page = FakePage()
 
@@ -183,7 +121,6 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
                     page,
                     str(output_path),
                     output_format="png",
-                    in_memory=True,
                     capture_duration=float("inf"),
                 )
 
@@ -199,7 +136,6 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
                 str(Path(temp_dir) / "frames"),
                 fps=30,
                 output_format="png",
-                in_memory=True,
                 capture_duration=2.5,
             )
 
@@ -248,17 +184,14 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "missing" / "frames"
-            frames, duration = await capture_frames_server_driven(
+            await capture_frames_server_driven(
                 page,
                 str(output_path),
                 output_format="png",
-                in_memory=True,
                 hide_grid=True,
             )
 
-            self.assertEqual(duration, 1.25)
-            self.assertEqual(len(frames), 2)
-            self.assertFalse(output_path.parent.exists())
+            self.assertEqual(len(sorted(output_path.glob("frame_*.png"))), 2)
             self.assertEqual(
                 page.svg_locator.screenshot_calls,
                 [{"type": "png"}] * 2,
