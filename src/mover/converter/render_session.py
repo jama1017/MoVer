@@ -243,7 +243,7 @@ class RenderSession:
         finally:
             self._active_operation = None
 
-    async def get_animation_info(self, fps: int = 60) -> dict[str, Any]:
+    async def get_animation_info(self, fps: float = 60) -> dict[str, Any]:
         page = self._begin_operation("get_animation_info")
         try:
             return await page.evaluate("fps => getAnimationInfo(fps)", fps)
