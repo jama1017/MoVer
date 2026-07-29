@@ -26,6 +26,20 @@ jobs:
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
 
+      - name: Verify tag matches pyproject version
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)"
+          if [[ "${RELEASE_TAG}" != "v${version}" ]]; then
+            echo "::error::Release tag ${RELEASE_TAG} does not match pyproject.toml version ${version}."
+            echo "::error::The tag most likely points at the wrong commit. Delete the release and tag, then recreate against the merge commit that carries ${version}."
+            exit 1
+          fi
+          echo "Tag ${RELEASE_TAG} matches pyproject.toml version ${version}"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
