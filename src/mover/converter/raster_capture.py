@@ -197,6 +197,7 @@ async def _capture_sequential(
     await scene.wait_for(state="visible")
     capture_started = False
     original_style: str | None = None
+    frame_style: str | None = None
     dimensions_set = False
     frames: list[np.ndarray] = []
     try:
