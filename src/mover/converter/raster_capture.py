@@ -173,6 +173,50 @@ async def _set_scene_dimensions(
     )
 
 
+async def _hide_scene_siblings(scene):
+    """Keep painting siblings out of an element screenshot of the scene.
+
+    A scene carries no background colour of its own, so siblings laid out beneath
+    it once it is positioned at the origin would otherwise composite into every
+    frame. Batched capture hides them too, at ``convert.js`` ``hiddenElements``.
+    Inline, because a sibling's own inline ``!important`` outranks a rule; and by
+    attribute, because ``element.style`` leaves ``style=""`` behind on restore.
+    """
+    return await scene.evaluate_handle(
+        """scene => {
+            const sceneRoot = scene.closest("body > *");
+            const hidden = [];
+            for (const element of scene.ownerDocument.body.children) {
+                if (element === sceneRoot || element.tagName === "SCRIPT") {
+                    continue;
+                }
+                const originalStyle = element.getAttribute("style");
+                hidden.push([element, originalStyle]);
+                // Last declaration of equal importance wins, so append.
+                element.setAttribute(
+                    "style",
+                    (originalStyle === null ? "" : `${originalStyle};`)
+                    + "display: none !important",
+                );
+            }
+            return hidden;
+        }"""
+    )
+
+
+async def _restore_scene_siblings(hidden) -> None:
+    await hidden.evaluate(
+        """hidden => hidden.forEach(([element, originalStyle]) => {
+            if (originalStyle === null) {
+                element.removeAttribute("style");
+            } else {
+                element.setAttribute("style", originalStyle);
+            }
+        })"""
+    )
+    await hidden.dispose()
+
+
 async def _restore_scene_style(scene, original_style: str | None) -> None:
     await scene.evaluate(
         """(element, originalStyle) => {
@@ -192,12 +236,15 @@ async def _capture_sequential(
     width: int,
     height: int,
     hide_grid: bool,
+    omit_background: bool,
 ) -> list[np.ndarray]:
     scene = page.locator("svg").first
     await scene.wait_for(state="visible")
     capture_started = False
     original_style: str | None = None
+    frame_style: str | None = None
     dimensions_set = False
+    hidden_siblings = None
     frames: list[np.ndarray] = []
     try:
         capture_started = await page.evaluate("beginServerDrivenCapture()")
@@ -208,6 +255,7 @@ async def _capture_sequential(
             position_at_origin=True,
         )
         dimensions_set = True
+        hidden_siblings = await _hide_scene_siblings(scene)
         for seek_time in seek_times:
             await page.evaluate("time => seekToTime(time)", seek_time)
             await page.evaluate(AWAIT_PAINT_JS)
@@ -223,7 +271,7 @@ async def _capture_sequential(
                 png_bytes = await scene.screenshot(
                     type="png",
                     scale="css",
-                    omit_background=False,
+                    omit_background=omit_background,
                 )
             finally:
                 if hide_grid:
@@ -240,11 +288,15 @@ async def _capture_sequential(
         return frames
     finally:
         try:
-            if dimensions_set:
-                await _restore_scene_style(scene, original_style)
+            if hidden_siblings is not None:
+                await _restore_scene_siblings(hidden_siblings)
         finally:
-            if capture_started:
-                await page.evaluate("restoreServerDrivenCapture()")
+            try:
+                if dimensions_set:
+                    await _restore_scene_style(scene, original_style)
+            finally:
+                if capture_started:
+                    await page.evaluate("restoreServerDrivenCapture()")
 
 
 def _validate_batch_geometry(
@@ -316,13 +368,14 @@ async def _capture_batched(
     width: int,
     height: int,
     hide_grid: bool,
+    omit_background: bool,
 ) -> list[np.ndarray]:
     support = await get_batched_capture_support(page, width, height)
     if not support.get("supported"):
         reason = str(support.get("reason") or "unknown eligibility failure")
         LOGGER.warning("Batched capture unavailable: %s; using sequential", reason)
         return await _capture_sequential(
-            page, seek_times, width, height, hide_grid
+            page, seek_times, width, height, hide_grid, omit_background
         )
 
     chunk_size = _plan_batch_chunk_size(width, height)
@@ -332,7 +385,7 @@ async def _capture_batched(
             "two frames; using sequential"
         )
         return await _capture_sequential(
-            page, seek_times, width, height, hide_grid
+            page, seek_times, width, height, hide_grid, omit_background
         )
 
     frames: list[np.ndarray] = []
@@ -378,6 +431,7 @@ async def _capture_batched(
                 screenshot_options = {
                     "type": "png",
                     "scale": "css",
+                    "omit_background": omit_background,
                     "timeout": 10_000,
                 }
                 try:
@@ -419,7 +473,7 @@ async def _capture_batched(
     except (BatchCaptureError, OSError) as error:
         LOGGER.warning("Batched capture failed: %s; using sequential", error)
         return await _capture_sequential(
-            page, seek_times, width, height, hide_grid
+            page, seek_times, width, height, hide_grid, omit_background
         )
 
 
@@ -431,12 +485,15 @@ async def capture_png_frames_at_times(
     height: int,
     strategy: str = "batched",
     hide_grid: bool = False,
+    omit_background: bool = False,
 ) -> list[np.ndarray]:
     """Return normalized float32 RGBA frames at ordered explicit times.
 
     The page must already have initialized and prepared MoVer timeline control.
     Batched capture uses one paint wait and screenshot per bounded chunk, then
     falls back to exact-dimension sequential capture when the page is ineligible.
+    ``omit_background`` captures a transparent background and implies
+    ``hide_grid``.
     """
     width, height = _normalize_dimensions(width, height)
     times = _normalize_times(seek_times)
@@ -445,8 +502,10 @@ async def capture_png_frames_at_times(
         raise ValueError(
             f"Unsupported capture strategy: {strategy}. Expected: {supported}"
         )
-    if not isinstance(hide_grid, bool):
-        raise ValueError("hide_grid must be a boolean")
+    if not isinstance(hide_grid, bool) or not isinstance(omit_background, bool):
+        raise ValueError("hide_grid and omit_background must be booleans")
+    ## The grid is a CSS background image, so transparency alone leaves it.
+    hide_grid = hide_grid or omit_background
     if not times:
         return []
 
@@ -458,8 +517,8 @@ async def capture_png_frames_at_times(
         raise ValueError("Stage 6C capture requires devicePixelRatio == 1")
     if strategy == "sequential":
         return await _capture_sequential(
-            page, times, width, height, hide_grid
+            page, times, width, height, hide_grid, omit_background
         )
     return await _capture_batched(
-        page, times, width, height, hide_grid
+        page, times, width, height, hide_grid, omit_background
     )

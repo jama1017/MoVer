@@ -17,6 +17,7 @@ from mover.converter.mover_converter import (
     capture_frames_server_driven,
     convert_animation,
     create_video_from_frames,
+    main,
     parse_args,
     run_conversion,
 )
@@ -154,7 +155,10 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertIsNone(result)
-            self.assertEqual(page.svg_locator.screenshot_calls, [{"type": "png"}] * 2)
+            self.assertEqual(
+                page.svg_locator.screenshot_calls,
+                [{"type": "png", "omit_background": False}] * 2,
+            )
             self.assertEqual(
                 sorted(path.read_bytes() for path in output_path.glob("frame_*.png")),
                 [page.svg_locator.png_bytes] * 2,
@@ -194,9 +198,27 @@ class CaptureFramesServerDrivenTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(sorted(output_path.glob("frame_*.png"))), 2)
             self.assertEqual(
                 page.svg_locator.screenshot_calls,
-                [{"type": "png"}] * 2,
+                [{"type": "png", "omit_background": False}] * 2,
             )
             self.assertEqual(page.svg_locator.style, original_style)
+            self.assertEqual(len(page.svg_locator.evaluate_calls), 4)
+
+    async def test_omit_background_hides_the_grid_without_hide_grid(self) -> None:
+        page = FakePage()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            await capture_frames_server_driven(
+                page,
+                str(Path(temp_dir) / "frames"),
+                output_format="png",
+                omit_background=True,
+            )
+
+            self.assertEqual(
+                page.svg_locator.screenshot_calls,
+                [{"type": "png", "omit_background": True}] * 2,
+            )
+            ## Two evaluate calls per frame means the grid was suppressed and restored.
             self.assertEqual(len(page.svg_locator.evaluate_calls), 4)
 
 
@@ -315,6 +337,17 @@ class OutputNamingTest(unittest.TestCase):
             self.assertFalse(parse_args().hide_grid)
         with patch("sys.argv", ["mover-converter", "example.html", "0", "--hide-grid"]):
             self.assertTrue(parse_args().hide_grid)
+
+    def test_omit_background_cli_flag_reaches_convert_animation(self) -> None:
+        with patch("sys.argv", ["mover-converter", "example.html", "0"]):
+            self.assertFalse(parse_args().omit_background)
+        argv = ["mover-converter", "example.html", "0", "--omit-background"]
+        with patch("sys.argv", argv), patch(
+            "mover.converter.mover_converter.convert_animation"
+        ) as convert:
+            main()
+        ## main() passes positionally, so the flag must not land on a neighbour.
+        self.assertIs(convert.call_args.args[-1], True)
 
     @patch(
         "mover.converter.mover_converter.subprocess.run",

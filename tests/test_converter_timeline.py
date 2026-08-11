@@ -1293,6 +1293,43 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(after["paused"])
         self.assertAlmostEqual(after["time"], before, delta=0.01)
 
+    async def test_vis_js_state_survives_calls_made_while_it_loads(self) -> None:
+        """convert.js calls into vis.js behind `typeof fn === "function"` guards.
+        Those functions hoist ahead of the state they touch, so a call landing
+        while vis.js is still executing must not find a temporal dead zone."""
+        page = await self.browser.new_page()
+        await page.set_content(BASE_DOCUMENT)
+        await page.add_script_tag(path=str(GSAP_JS))
+        # Re-enter through the root pause vis.js performs at load: the narrowest
+        # window a caller can hit, with the file running and its functions live.
+        await page.add_script_tag(
+            content="""
+            window.reentry = null;
+            const realPause = gsap.globalTimeline.pause.bind(gsap.globalTimeline);
+            gsap.globalTimeline.pause = (...args) => {
+                if (!window.reentry) {
+                    try {
+                        window.reentry = {
+                            stopped: stopTimelineVisualizationPlayback(),
+                        };
+                    } catch (error) {
+                        window.reentry = {error: String(error)};
+                    }
+                }
+                return realPause(...args);
+            };
+            """
+        )
+        await page.add_script_tag(content=VIS_SOURCE)
+
+        reentry = await page.evaluate("() => window.reentry")
+
+        self.assertIsNotNone(reentry, "vis.js never paused the root at load")
+        self.assertNotIn(
+            "error", reentry, f"re-entrant call failed: {reentry.get('error')}"
+        )
+        self.assertTrue(reentry["stopped"])
+
     async def test_root_is_frozen_at_load_without_vis_js(self) -> None:
         """Capture must not depend on vis.js: pages that embed convert.js alone
         still get the authored root frozen, so the captured set cannot drift."""

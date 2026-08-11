@@ -1,14 +1,5 @@
 let tl_to_use = null
 
-// Preview utility only: play/pause and frame count. Capture must not depend on this
-// file being loaded — freezing the authored root, disabling GSDevTools, and collecting
-// the recorded root all live in convert.js, which pages may embed without vis.js.
-// Exception: this file loads before convert.js and the root advances across the gap.
-if (typeof gsap !== "undefined" && gsap.globalTimeline) {
-    gsap.globalTimeline.pause()
-}
-// tl_to_use.eventCallback("onUpdate", showFrame);
-
 // Use duration() instead of totalDuration() to handle infinite repeats (repeat(-1))
 let totalSteps = 0;
 let moverVisualizationFrame = null;
@@ -18,6 +9,16 @@ let moverVisualizationPlaybackToken = 0;
 let frameCount = document.createElement("p");
 let frameNum = 0;
 frameCount.textContent = `frame: 0 / ${totalSteps}`;
+
+// Preview utility only: play/pause and frame count. Capture must not depend on this
+// file being loaded — freezing the authored root, disabling GSDevTools, and collecting
+// the recorded root all live in convert.js, which pages may embed without vis.js.
+// Exception: this file loads before convert.js and the root advances across the gap.
+if (typeof gsap !== "undefined" && gsap.globalTimeline) {
+    gsap.globalTimeline.pause()
+}
+// tl_to_use.eventCallback("onUpdate", showFrame);
+
 document.getElementById("prompt")?.after(frameCount);
 
 function refreshTimelineVisualization() {

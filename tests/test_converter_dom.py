@@ -725,6 +725,102 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             )
         await self._assert_reset_state()
 
+    async def test_viewbox_only_transparent_scene_keeps_exact_dimensions(
+        self,
+    ) -> None:
+        await self.page.evaluate(
+            """() => {
+                document.documentElement.style.setProperty(
+                    "background", "transparent", "important"
+                );
+                document.body.style.setProperty(
+                    "background", "transparent", "important"
+                );
+                // Batched hides body siblings and sequential does not, so
+                // visible ones show through and dominate the comparison.
+                for (const id of ["#prompt", "#existing"]) {
+                    document.querySelector(id).style.setProperty(
+                        "display", "none", "important"
+                    );
+                }
+                const source = document.querySelector("#source");
+                source.removeAttribute("width");
+                source.removeAttribute("height");
+                source.setAttribute("viewBox", "0 0 20 20");
+                source.style.setProperty(
+                    "background", "transparent", "important"
+                );
+            }"""
+        )
+        expected_state = await self._snapshot_original_state()
+        times = [0.0, 1.0]
+        sequential = await capture_png_frames_at_times(
+            self.page,
+            times,
+            width=160,
+            height=90,
+            strategy="sequential",
+            hide_grid=True,
+            omit_background=True,
+        )
+        batched = await capture_png_frames_at_times(
+            self.page,
+            times,
+            width=160,
+            height=90,
+            hide_grid=True,
+            omit_background=True,
+        )
+        for fast_frame, sequential_frame in zip(batched, sequential):
+            self.assertEqual(fast_frame.shape, (90, 160, 4))
+            ## Tiled cells rasterize antialiased edges a shade differently, and
+            ## against transparency that fringe sits near alpha 0, where a
+            ## per-pixel bound measures the fringe rather than the frame.
+            self.assertLess(
+                float(np.abs(fast_frame - sequential_frame).mean()),
+                0.001,
+            )
+            self.assertEqual(fast_frame[0, 0, 3], 0.0)
+        await self._assert_reset_state(expected_state)
+
+    async def test_transparent_capture_excludes_painting_body_siblings(
+        self,
+    ) -> None:
+        ## A generated page keeps its prompt and buttons as siblings of the scene,
+        ## which covers them once positioned at the origin. The viewBox matches the
+        ## requested 16:9 so batch capture runs and can be compared against.
+        await self.page.evaluate(
+            """() => {
+                document.documentElement.style.setProperty(
+                    "background", "transparent", "important"
+                );
+                document.body.style.setProperty(
+                    "background", "transparent", "important"
+                );
+                const source = document.querySelector("#source");
+                source.removeAttribute("width");
+                source.removeAttribute("height");
+                source.setAttribute("viewBox", "0 0 320 180");
+                source.style.setProperty(
+                    "background", "transparent", "important"
+                );
+            }"""
+        )
+        expected_state = await self._snapshot_original_state()
+        request = dict(width=160, height=90, hide_grid=True, omit_background=True)
+        sequential = await capture_png_frames_at_times(
+            self.page, [0.0], strategy="sequential", **request
+        )
+        batched = await capture_png_frames_at_times(self.page, [0.0], **request)
+
+        opaque_counts = [
+            int((frame[..., 3] > 0.5).sum())
+            for frame in (sequential[0], batched[0])
+        ]
+        self.assertEqual(opaque_counts[0], opaque_counts[1])
+        ## Covers the restore too: the snapshot carries every sibling's inline style.
+        await self._assert_reset_state(expected_state)
+
     async def test_scene_size_falls_back_to_viewbox_and_preserves_paint_fill(
         self,
     ) -> None:
