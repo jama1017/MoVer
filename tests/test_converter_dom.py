@@ -783,6 +783,44 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(fast_frame[0, 0, 3], 0.0)
         await self._assert_reset_state(expected_state)
 
+    async def test_transparent_capture_excludes_painting_body_siblings(
+        self,
+    ) -> None:
+        ## A generated page keeps its prompt and buttons as siblings of the scene,
+        ## which covers them once positioned at the origin. The viewBox matches the
+        ## requested 16:9 so batch capture runs and can be compared against.
+        await self.page.evaluate(
+            """() => {
+                document.documentElement.style.setProperty(
+                    "background", "transparent", "important"
+                );
+                document.body.style.setProperty(
+                    "background", "transparent", "important"
+                );
+                const source = document.querySelector("#source");
+                source.removeAttribute("width");
+                source.removeAttribute("height");
+                source.setAttribute("viewBox", "0 0 320 180");
+                source.style.setProperty(
+                    "background", "transparent", "important"
+                );
+            }"""
+        )
+        expected_state = await self._snapshot_original_state()
+        request = dict(width=160, height=90, hide_grid=True, omit_background=True)
+        sequential = await capture_png_frames_at_times(
+            self.page, [0.0], strategy="sequential", **request
+        )
+        batched = await capture_png_frames_at_times(self.page, [0.0], **request)
+
+        opaque_counts = [
+            int((frame[..., 3] > 0.5).sum())
+            for frame in (sequential[0], batched[0])
+        ]
+        self.assertEqual(opaque_counts[0], opaque_counts[1])
+        ## Covers the restore too: the snapshot carries every sibling's inline style.
+        await self._assert_reset_state(expected_state)
+
     async def test_scene_size_falls_back_to_viewbox_and_preserves_paint_fill(
         self,
     ) -> None:

@@ -173,6 +173,50 @@ async def _set_scene_dimensions(
     )
 
 
+async def _hide_scene_siblings(scene):
+    """Keep painting siblings out of an element screenshot of the scene.
+
+    A scene carries no background colour of its own, so siblings laid out beneath
+    it once it is positioned at the origin would otherwise composite into every
+    frame. Batched capture hides them too, at ``convert.js`` ``hiddenElements``.
+    Inline, because a sibling's own inline ``!important`` outranks a rule; and by
+    attribute, because ``element.style`` leaves ``style=""`` behind on restore.
+    """
+    return await scene.evaluate_handle(
+        """scene => {
+            const sceneRoot = scene.closest("body > *");
+            const hidden = [];
+            for (const element of scene.ownerDocument.body.children) {
+                if (element === sceneRoot || element.tagName === "SCRIPT") {
+                    continue;
+                }
+                const originalStyle = element.getAttribute("style");
+                hidden.push([element, originalStyle]);
+                // Last declaration of equal importance wins, so append.
+                element.setAttribute(
+                    "style",
+                    (originalStyle === null ? "" : `${originalStyle};`)
+                    + "display: none !important",
+                );
+            }
+            return hidden;
+        }"""
+    )
+
+
+async def _restore_scene_siblings(hidden) -> None:
+    await hidden.evaluate(
+        """hidden => hidden.forEach(([element, originalStyle]) => {
+            if (originalStyle === null) {
+                element.removeAttribute("style");
+            } else {
+                element.setAttribute("style", originalStyle);
+            }
+        })"""
+    )
+    await hidden.dispose()
+
+
 async def _restore_scene_style(scene, original_style: str | None) -> None:
     await scene.evaluate(
         """(element, originalStyle) => {
@@ -200,6 +244,7 @@ async def _capture_sequential(
     original_style: str | None = None
     frame_style: str | None = None
     dimensions_set = False
+    hidden_siblings = None
     frames: list[np.ndarray] = []
     try:
         capture_started = await page.evaluate("beginServerDrivenCapture()")
@@ -210,6 +255,7 @@ async def _capture_sequential(
             position_at_origin=True,
         )
         dimensions_set = True
+        hidden_siblings = await _hide_scene_siblings(scene)
         for seek_time in seek_times:
             await page.evaluate("time => seekToTime(time)", seek_time)
             await page.evaluate(AWAIT_PAINT_JS)
@@ -242,11 +288,15 @@ async def _capture_sequential(
         return frames
     finally:
         try:
-            if dimensions_set:
-                await _restore_scene_style(scene, original_style)
+            if hidden_siblings is not None:
+                await _restore_scene_siblings(hidden_siblings)
         finally:
-            if capture_started:
-                await page.evaluate("restoreServerDrivenCapture()")
+            try:
+                if dimensions_set:
+                    await _restore_scene_style(scene, original_style)
+            finally:
+                if capture_started:
+                    await page.evaluate("restoreServerDrivenCapture()")
 
 
 def _validate_batch_geometry(
