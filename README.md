@@ -218,7 +218,8 @@ mover-convert <input_animation.html> <port number>
   attributes included in comparison data.
 - `--disable-easing`: Replace tween easing with linear interpolation.
 - `--print-console`: Print browser console and network messages.
-- `--hide-grid`: Hide the default SVG grid (to indicate background transparency) during raster capture.
+- `--hide-grid`: Hide the default SVG grid during raster capture.
+- `--omit-background`: Capture a transparent background. Implies `--hide-grid`. Alpha survives with `--format png` only — the MP4 and GIF encoders flatten it.
 
 The converter always writes `<stem>_data.json`. GIF output requires a working FFmpeg installation.
 

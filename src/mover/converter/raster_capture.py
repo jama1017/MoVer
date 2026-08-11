@@ -192,6 +192,7 @@ async def _capture_sequential(
     width: int,
     height: int,
     hide_grid: bool,
+    omit_background: bool,
 ) -> list[np.ndarray]:
     scene = page.locator("svg").first
     await scene.wait_for(state="visible")
@@ -224,7 +225,7 @@ async def _capture_sequential(
                 png_bytes = await scene.screenshot(
                     type="png",
                     scale="css",
-                    omit_background=False,
+                    omit_background=omit_background,
                 )
             finally:
                 if hide_grid:
@@ -317,13 +318,14 @@ async def _capture_batched(
     width: int,
     height: int,
     hide_grid: bool,
+    omit_background: bool,
 ) -> list[np.ndarray]:
     support = await get_batched_capture_support(page, width, height)
     if not support.get("supported"):
         reason = str(support.get("reason") or "unknown eligibility failure")
         LOGGER.warning("Batched capture unavailable: %s; using sequential", reason)
         return await _capture_sequential(
-            page, seek_times, width, height, hide_grid
+            page, seek_times, width, height, hide_grid, omit_background
         )
 
     chunk_size = _plan_batch_chunk_size(width, height)
@@ -333,7 +335,7 @@ async def _capture_batched(
             "two frames; using sequential"
         )
         return await _capture_sequential(
-            page, seek_times, width, height, hide_grid
+            page, seek_times, width, height, hide_grid, omit_background
         )
 
     frames: list[np.ndarray] = []
@@ -379,6 +381,7 @@ async def _capture_batched(
                 screenshot_options = {
                     "type": "png",
                     "scale": "css",
+                    "omit_background": omit_background,
                     "timeout": 10_000,
                 }
                 try:
@@ -420,7 +423,7 @@ async def _capture_batched(
     except (BatchCaptureError, OSError) as error:
         LOGGER.warning("Batched capture failed: %s; using sequential", error)
         return await _capture_sequential(
-            page, seek_times, width, height, hide_grid
+            page, seek_times, width, height, hide_grid, omit_background
         )
 
 
@@ -432,12 +435,15 @@ async def capture_png_frames_at_times(
     height: int,
     strategy: str = "batched",
     hide_grid: bool = False,
+    omit_background: bool = False,
 ) -> list[np.ndarray]:
     """Return normalized float32 RGBA frames at ordered explicit times.
 
     The page must already have initialized and prepared MoVer timeline control.
     Batched capture uses one paint wait and screenshot per bounded chunk, then
     falls back to exact-dimension sequential capture when the page is ineligible.
+    ``omit_background`` captures a transparent background and implies
+    ``hide_grid``.
     """
     width, height = _normalize_dimensions(width, height)
     times = _normalize_times(seek_times)
@@ -446,8 +452,10 @@ async def capture_png_frames_at_times(
         raise ValueError(
             f"Unsupported capture strategy: {strategy}. Expected: {supported}"
         )
-    if not isinstance(hide_grid, bool):
-        raise ValueError("hide_grid must be a boolean")
+    if not isinstance(hide_grid, bool) or not isinstance(omit_background, bool):
+        raise ValueError("hide_grid and omit_background must be booleans")
+    ## The grid is a CSS background image, so transparency alone leaves it.
+    hide_grid = hide_grid or omit_background
     if not times:
         return []
 
@@ -459,8 +467,8 @@ async def capture_png_frames_at_times(
         raise ValueError("Stage 6C capture requires devicePixelRatio == 1")
     if strategy == "sequential":
         return await _capture_sequential(
-            page, times, width, height, hide_grid
+            page, times, width, height, hide_grid, omit_background
         )
     return await _capture_batched(
-        page, times, width, height, hide_grid
+        page, times, width, height, hide_grid, omit_background
     )

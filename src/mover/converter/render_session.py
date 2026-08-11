@@ -283,6 +283,7 @@ class RenderSession:
         width: int,
         height: int,
         hide_grid: bool = False,
+        omit_background: bool = False,
     ) -> list[np.ndarray]:
         if self._capture_requires_rebuild:
             self._require_page()
@@ -299,6 +300,7 @@ class RenderSession:
                 width=width,
                 height=height,
                 hide_grid=hide_grid,
+                omit_background=omit_background,
             )
             self._capture_requires_rebuild = (
                 self._timeline_requires_rebuild_between_captures

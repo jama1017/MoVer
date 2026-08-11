@@ -55,9 +55,13 @@ def _get_animation_output_path(
     raise ValueError(f"Unsupported output format: {normalized_format}")
 
 
-async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
+async def _capture_svg_png(
+    svg_element, hide_grid: bool, omit_background: bool
+) -> bytes:
     if not hide_grid:
-        return await svg_element.screenshot(type="png")
+        return await svg_element.screenshot(
+            type="png", omit_background=omit_background
+        )
 
     original_style = await svg_element.get_attribute("style")
     await svg_element.evaluate(
@@ -66,7 +70,9 @@ async def _capture_svg_png(svg_element, hide_grid: bool) -> bytes:
         """
     )
     try:
-        return await svg_element.screenshot(type="png")
+        return await svg_element.screenshot(
+            type="png", omit_background=omit_background
+        )
     finally:
         await svg_element.evaluate(
             """(element, originalStyle) => {
@@ -225,6 +231,7 @@ async def capture_frames_server_driven(
     output_format: str = "mp4",
     hide_grid: bool = False,
     capture_duration: float | None = None,
+    omit_background: bool = False,
 ) -> None:
     """
     Server-driven frame capture: Python controls the timeline and screenshots.
@@ -232,6 +239,9 @@ async def capture_frames_server_driven(
     are saved as per-frame files in a directory. ``hide_grid`` suppresses the
     SVG grid only in raster screenshots and does not mutate the page's
     persistent styles. GIF output requires a working FFmpeg installation.
+
+    ``omit_background`` captures a transparent background and implies
+    ``hide_grid``. Alpha survives in PNG output only.
 
     Call this at most once per page load. A capture leaves element state at the
     final frame and only the timeline time is restored, so a second pass silently
@@ -242,6 +252,8 @@ async def capture_frames_server_driven(
         raise ValueError("fps must be positive")
     if output_format not in SUPPORTED_OUTPUT_FORMATS:
         raise ValueError(f"Unsupported output format: {output_format}")
+    ## The grid is a CSS background image, so transparency alone leaves it.
+    hide_grid = hide_grid or omit_background
     normalized_capture_duration = _normalize_capture_duration(capture_duration)
 
     ## Get animation info from the page using the same FPS used for seeking.
@@ -298,7 +310,9 @@ async def capture_frames_server_driven(
                 frame_path = frames_dir / f"frame_{frame_index:06d}.svg"
                 frame_path.write_text(f"{svg_markup}\n", encoding="utf-8")
             else:
-                png_bytes = await _capture_svg_png(svg_element, hide_grid)
+                png_bytes = await _capture_svg_png(
+                    svg_element, hide_grid, omit_background
+                )
 
                 assert frames_dir is not None
                 frame_path = frames_dir / f"frame_{frame_index:06d}.png"
@@ -471,7 +485,7 @@ def _get_bound_port(server: uvicorn.Server) -> int:
     return sockets[0].getsockname()[1]
 
 
-async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: float = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False, capture_duration: float | None = None) -> None:
+async def run_conversion(html_file: str, port: int, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: float = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False, capture_duration: float | None = None, omit_background: bool = False) -> None:
     """Run the conversion process."""
     html_path = Path(html_file)
     html_dir = str(html_path.parent)
@@ -563,6 +577,7 @@ async def run_conversion(html_file: str, port: int, create_video: bool = False, 
                     output_format,
                     hide_grid=hide_grid,
                     capture_duration=normalized_capture_duration,
+                    omit_background=omit_background,
                 )
 
             await browser.close()
@@ -595,7 +610,7 @@ async def capture_json_animation(actual_port: int, comparison_properties: dict |
         print("Easing is disabled for all tweens.")
 
 
-def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: float = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False, capture_duration: float | None = None) -> None:
+def convert_animation(html_file: str, port: int = 3013, create_video: bool = False, disable_easing: bool = False, save_keyframes: bool = False, save_for_comparison: bool = False, output_format: str = "mp4", video_fps: float = DEFAULT_FPS, print_console: bool = False, comparison_properties: dict | None = None, output_dir: str | None = None, save_animated_properties: bool = False, hide_grid: bool = False, capture_duration: float | None = None, omit_background: bool = False) -> None:
     """
     Convert a GSAP animation in an HTML file to JSON and optionally create animation output.
 
@@ -622,8 +637,10 @@ def convert_animation(html_file: str, port: int = 3013, create_video: bool = Fal
             changing the interactive page styling. Defaults to False.
         capture_duration (float, optional): Explicit finite duration in seconds.
             Required when any captured GSAP animation repeats infinitely.
+        omit_background (bool, optional): Capture a transparent background.
+            Implies hide_grid. Alpha survives in PNG output only. Defaults to False.
     """
-    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir, save_animated_properties, hide_grid, capture_duration))
+    asyncio.run(run_conversion(html_file, port, create_video, disable_easing, save_keyframes, save_for_comparison, output_format, video_fps, print_console, comparison_properties, output_dir, save_animated_properties, hide_grid, capture_duration, omit_background))
 
 
 def parse_args() -> argparse.Namespace:
@@ -642,6 +659,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=str, default=None, help="Directory to write output files to (default: same directory as the HTML file)")
     parser.add_argument("--save-animated-properties", "-ap", action="store_true", help="Extract and save animated property names (registry names per element) to _properties.json")
     parser.add_argument("--hide-grid", action="store_true", help="Hide the SVG grid in raster captures (default: False)")
+    parser.add_argument("--omit-background", action="store_true", help="Capture a transparent background. Implies --hide-grid. Alpha survives with --format png only (default: False)")
     parser.add_argument("--capture-duration", type=float, default=None, help="Finite capture duration in seconds (required for infinite GSAP animations)")
     return parser.parse_args()
 
@@ -650,7 +668,7 @@ def main() -> None:
     """Main entry point for CLI usage."""
     args = parse_args()
     comp_props = json.loads(args.comparison_properties) if args.comparison_properties else None
-    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir, args.save_animated_properties, args.hide_grid, args.capture_duration)
+    convert_animation(args.html_file, args.port, args.create_video, args.disable_easing, args.save_keyframes, args.save_for_comparison, args.format, args.video_fps, args.print_console, comp_props, args.output_dir, args.save_animated_properties, args.hide_grid, args.capture_duration, args.omit_background)
 
 
 if __name__ == "__main__":
