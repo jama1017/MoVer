@@ -445,7 +445,9 @@ const NON_GRAPHICAL_TAGS = new Set([
 
 function isGraphicalElement(element) {
     if (!element || !element.tagName) return false;
-    return !NON_GRAPHICAL_TAGS.has(element.tagName.toLowerCase());
+    return typeof element.getCTM === "function"
+        && typeof element.getBBox === "function"
+        && !NON_GRAPHICAL_TAGS.has(element.tagName.toLowerCase());
 }
 
 function getMoverElementPath(element, root = svgRef) {

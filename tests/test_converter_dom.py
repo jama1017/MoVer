@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from xml.etree import ElementTree
 
 import numpy as np
 from PIL import Image
@@ -1220,6 +1221,130 @@ class ConverterDomTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(properties), {"shape", "nested-shape"})
         self.assertEqual(set(properties["shape"]), expected)
         self.assertEqual(set(properties["nested-shape"]), expected)
+
+    async def _assert_resource_attribute_conversion(
+        self, target, initial_attributes, final_attributes, attribute, expected_values
+    ) -> None:
+        await self.page.add_script_tag(path=str(GSAP_JS))
+        result = await self.page.evaluate(
+            """async ({target, initialAttributes, finalAttributes, registry}) => {
+                const source = document.querySelector("#source");
+                source.innerHTML = `
+                    <defs>
+                        <mask id="mask" maskUnits="userSpaceOnUse"
+                            x="0" y="0" width="20" height="20">
+                            <rect id="mask-shape" width="20" height="20"
+                                fill="white"/>
+                        </mask>
+                        <filter id="filter">
+                            <feComponentTransfer>
+                                <feFuncA id="alpha" type="table"
+                                    tableValues="0 1"/>
+                            </feComponentTransfer>
+                        </filter>
+                    </defs>
+                    <view id="camera" viewBox="0 0 20 20"/>
+                    <circle id="shape" cx="10" cy="10" r="3"
+                        fill="blue" mask="url(#mask)" filter="url(#filter)"/>
+                    <rect id="static" width="1" height="1" fill="black"/>
+                `;
+                window.tl_to_use = gsap.timeline({paused: true});
+                const resource = document.getElementById(target);
+                tl_to_use.set(resource, {attr: initialAttributes}, 0);
+                tl_to_use.set(resource, {attr: finalAttributes}, 0.5);
+                tl_to_use.to("#shape", {x: 4, duration: 1, ease: "none"}, 0);
+                tl_to_use.to(
+                    "#mask-shape", {x: 2, duration: 1, ease: "none"}, 0
+                );
+
+                const uploads = {};
+                const originalFetch = window.fetch;
+                window.fetch = async (url, options) => {
+                    uploads[new URL(url).pathname] = JSON.parse(options.body);
+                    return {ok: true};
+                };
+                try {
+                    await convert(
+                        8001, false, true, true, registry,
+                        {spatial: ["transformedPts"], visual: [], svgAttributes: []},
+                        true, 2
+                    );
+                } finally {
+                    window.fetch = originalFetch;
+                }
+                const frames = [0, 0.5, 1].map(time => {
+                    seekToTime(time);
+                    return new XMLSerializer().serializeToString(source);
+                });
+                return {
+                    uploads,
+                    frames,
+                    animatedIds: getAllAnimatedElements(source).map(el => el.id),
+                    staticIds: getNonAnimatedElements(source).map(el => el.id),
+                };
+            }""",
+            {
+                "target": target,
+                "initialAttributes": initial_attributes,
+                "finalAttributes": final_attributes,
+                "registry": PROPERTY_REGISTRY,
+            },
+        )
+
+        animated_ids = {"shape", "mask-shape"}
+        object_ids = animated_ids | {"static"}
+        self.assertEqual(set(result["animatedIds"]), animated_ids)
+        self.assertEqual(result["staticIds"], ["static"])
+        uploads = result["uploads"]
+        for endpoint in (
+            "/convert-js-to-json",
+            "/convert-js-to-keyframes-json",
+            "/convert-js-to-rendered-json",
+        ):
+            self.assertEqual(set(uploads[endpoint]) - {"info"}, object_ids)
+        self.assertEqual(set(uploads["/save-animated-properties"]), animated_ids)
+        geometry = uploads["/convert-js-to-json"]
+        self.assertEqual(geometry["info"]["steps"], 2)
+        self.assertEqual(
+            {obj["id"] for obj in geometry["info"]["objects"]}, object_ids
+        )
+        self.assertEqual(geometry["shape"]["translateX_acc"], [0, 2, 4])
+        self.assertEqual(geometry["mask-shape"]["translateX_acc"], [0, 1, 2])
+
+        values = []
+        for frame in result["frames"]:
+            svg = ElementTree.fromstring(frame)
+            self.assertIsNotNone(svg.find(".//{*}mask"))
+            self.assertIsNotNone(svg.find(".//{*}feFuncA"))
+            resource = svg.find(f".//*[@id='{target}']")
+            self.assertIsNotNone(resource)
+            values.append(resource.get(attribute))
+        self.assertEqual(values, expected_values)
+
+    async def test_mask_attributes_survive_geometry_export(self) -> None:
+        # Reduced from Astra case 10338553_1 (Car): a zero-duration mask setup.
+        await self._assert_resource_attribute_conversion(
+            target="mask",
+            initial_attributes={
+                "maskUnits": "userSpaceOnUse",
+                "maskContentUnits": "userSpaceOnUse",
+                "x": 0, "y": 0, "width": 20, "height": 20,
+            },
+            final_attributes={"width": 10},
+            attribute="width",
+            expected_values=["20", "10", "10"],
+        )
+
+    async def test_filter_attributes_survive_geometry_export(self) -> None:
+        # Isolate the feFuncA sets from Astra 5674652_0 (Shield Protection).
+        # Its unrelated DrawSVG choreography is unnecessary for this failure.
+        await self._assert_resource_attribute_conversion(
+            target="alpha",
+            initial_attributes={"tableValues": "0 1"},
+            final_attributes={"tableValues": "1.0 0.0"},
+            attribute="tableValues",
+            expected_values=["0 1", "1.0 0.0", "1.0 0.0"],
+        )
 
     async def test_anonymous_animated_elements_get_unique_json_keys(
         self,
