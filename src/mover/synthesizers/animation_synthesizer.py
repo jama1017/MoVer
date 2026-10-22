@@ -11,17 +11,15 @@ class AnimationSynthesizer(BaseSynthesizer):
     ## HTML template file path for animation synthesizer
     _html_template_filepath = Path(__file__).parent / 'assets' / 'template.html'
 
-    def __init__(self, model_name: str = "gpt-4.1", provider: str = "openai", num_ctx: int = 128000, params: Dict[str, Any] = {}, library_type: str = "default"):
+    def __init__(self, model: str = "openai/gpt-4.1", params: Dict[str, Any] | None = None, library_type: str = "default"):
         """
         Initialize the Animation Synthesizer.
 
         Args:
-            model_name: Name of the model to use (default: "gpt-4o")
-            provider: LLM provider to use (default: "openai")
-            num_ctx: Max context length. Only used for the locally-hosted models (default: 128000)
-            params: Additional parameters to pass to the LLM client (default: {})
+            model: LiteLLM model identifier (default: "openai/gpt-4.1")
+            params: Additional request settings to pass to LiteLLM
         """
-        super().__init__(model_name=model_name, provider=provider, num_ctx=num_ctx, params=params)
+        super().__init__(model=model, params=params)
 
         ## Load HTML template
         with open(self._html_template_filepath, 'r') as f:

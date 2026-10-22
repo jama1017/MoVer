@@ -31,13 +31,8 @@ def init_synthesizer(config: Dict[str, Any]) -> MoverSynthesizer:
         Initialized synthesizer instance
     """
     params = {k: v for k, v in config.get('params', {}).items() if v is not None}
-    if config.get('vllm_serve_port') is not None:
-        params['vllm_serve_port'] = config['vllm_serve_port']
-    
     return MoverSynthesizer(
-        model_name=config['name'],
-        provider=config['provider'],
-        num_ctx=config.get('num_ctx', 128000),
+        model=config['model'],
         params=params
     )
 

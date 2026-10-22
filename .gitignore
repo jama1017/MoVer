@@ -2,6 +2,7 @@
 .DS_Store
 *__pycache__/
 node_modules/
+.venv-vllm/
 
 ## Mover
 .gitattributes
@@ -29,6 +30,7 @@ tests/*
 !tests/test_converter_timeline.py
 !tests/test_render_session.py
 !tests/test_animation_prompt_assets.py
+!tests/test_llm_client.py
 !tests/test_mover_querier.py
 !tests/test_transform_types.py
 !tests/check_release_artifacts.py
@@ -60,5 +62,5 @@ examples/svg/eye.svg
 !examples/render_session_demo.py
 .cursor/*
 .vscode/*
-docs/*
-plans/*
+.docs/*
+.plans/*

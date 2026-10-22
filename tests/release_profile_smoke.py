@@ -101,12 +101,20 @@ def check_common(repo_root: Path) -> dict[str, object]:
     return {"package_root": str(package_root)}
 
 
-def check_minimal() -> dict[str, object]:
-    absent = ("cv2", "groq", "jacinle", "openai", "pyrealb", "torch")
+def check_default() -> dict[str, object]:
+    absent = ("cv2", "groq", "ollama", "jacinle", "lark", "pyrealb", "torch", "treelib")
     unexpected = [name for name in absent if module_available(name)]
-    require(not unexpected, f"Minimal profile contains full/media packages: {unexpected}")
+    require(not unexpected, f"Default profile contains full/provider packages: {unexpected}")
+    required = ("google.auth", "jinja2", "litellm", "mcp", "tenacity")
+    missing = [name for name in required if not module_available(name)]
+    require(not missing, f"Default profile is missing dependencies: {missing}")
 
     importlib.import_module("mover.converter.mover_converter")
+    importlib.import_module("mover.synthesizers.animation_synthesizer")
+    llm_client = importlib.import_module("mover.synthesizers.llm_client")
+    client = llm_client.LLMClient("openai/gpt-4.1")
+    require(client.model == "openai/gpt-4.1", client.model)
+    require("mover.pipeline" not in sys.modules, "Synthesis imported the full pipeline")
     try:
         importlib.import_module("mover.pipeline")
     except ModuleNotFoundError as error:
@@ -115,19 +123,21 @@ def check_minimal() -> dict[str, object]:
             f"Pipeline error is not actionable: {error}",
         )
     else:
-        raise AssertionError("Minimal profile unexpectedly imported mover.pipeline")
-
-    return {"absent_modules": list(absent)}
+        raise AssertionError("Default profile unexpectedly imported mover.pipeline")
+    return {"llm_model": client.model, "absent_modules": list(absent)}
 
 
 def check_full(repo_root: Path) -> dict[str, object]:
     required = (
-        "groq",
+        "google.auth",
         "jacinle",
         "jinja2",
         "lark",
+        "litellm",
+        "mcp",
         "openai",
         "pyrealb",
+        "tenacity",
         "torch",
         "treelib",
         "yaml",
@@ -143,8 +153,8 @@ def check_full(repo_root: Path) -> dict[str, object]:
     importlib.import_module("mover.nlg.prompt_generator")
     importlib.import_module("mover.synthesizers.animation_synthesizer")
     llm_client = importlib.import_module("mover.synthesizers.llm_client")
-    providers = llm_client.get_available_providers()
-    require("openai" in providers and "groq" in providers, providers)
+    client = llm_client.LLMClient("openai/gpt-4.1")
+    require(client.model == "openai/gpt-4.1", client.model)
 
     from mover.dsl.mover_verifier import MoverVerifier
 
@@ -164,7 +174,7 @@ def check_full(repo_root: Path) -> dict[str, object]:
         sys.path.pop(0)
     require(prompts, "Offline prompt generation returned no prompts")
 
-    return {"available_providers": providers, "prompt_count": len(prompts)}
+    return {"llm_model": client.model, "prompt_count": len(prompts)}
 
 
 def check_ffmpeg_media(ffmpeg_executable: Path | None) -> dict[str, object]:
@@ -206,15 +216,15 @@ def check_ffmpeg_media(ffmpeg_executable: Path | None) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", choices=("minimal", "full"), required=True)
+    parser.add_argument("--profile", choices=("default", "full"), required=True)
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--ffmpeg-executable", type=Path)
     args = parser.parse_args()
 
     summary = {"profile": args.profile}
     summary.update(check_common(args.repo_root))
-    if args.profile == "minimal":
-        summary.update(check_minimal())
+    if args.profile == "default":
+        summary.update(check_default())
     else:
         summary.update(check_full(args.repo_root))
     summary["media"] = check_ffmpeg_media(args.ffmpeg_executable)

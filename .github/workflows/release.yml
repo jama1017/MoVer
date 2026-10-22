@@ -97,9 +97,11 @@ jobs:
           - "3.10"
           - "3.12"
         profile:
-          - minimal
+          - default
           - full
     runs-on: ${{ matrix.os }}
+    env:
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
     steps:
       - name: Check out release tests
         uses: actions/checkout@v4
@@ -134,8 +136,8 @@ jobs:
           echo "${RUNNER_TEMP}/mover-venv/bin" >> "${GITHUB_PATH}"
           echo "VIRTUAL_ENV=${RUNNER_TEMP}/mover-venv" >> "${GITHUB_ENV}"
 
-      - name: Install minimal wheel
-        if: matrix.profile == 'minimal'
+      - name: Install default wheel
+        if: matrix.profile == 'default'
         shell: bash
         run: |
           uv pip install "${RUNNER_TEMP}"/dist/mover-*-py3-none-any.whl
@@ -172,7 +174,7 @@ jobs:
             --repo-root "${GITHUB_WORKSPACE}"
 
       - name: Install Chromium
-        if: matrix.profile == 'minimal'
+        if: matrix.profile == 'default'
         shell: bash
         run: |
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
@@ -182,7 +184,7 @@ jobs:
           fi
 
       - name: Run converter artifact tests
-        if: matrix.profile == 'minimal'
+        if: matrix.profile == 'default'
         shell: bash
         env:
           MOVER_REQUIRE_BROWSER: "1"
@@ -205,10 +207,19 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tests
         run: |
           python -m unittest \
+            test_llm_client \
             test_animation_prompt_assets \
             test_converter_capture.OutputNamingTest \
             test_transform_types \
             -v
+
+      - name: Run model request tests
+        if: matrix.profile == 'default'
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tests
+        run: |
+          python -m unittest test_llm_client test_animation_prompt_assets -v
 
       - name: Verify installed commands
         shell: bash
@@ -216,71 +227,12 @@ jobs:
           mover-convert --help
           python -m mover.converter.mover_converter --help
 
-  provider:
-    name: Provider extra / ${{ matrix.extra }}
-    needs:
-      - build
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        extra:
-          - groq
-          - ollama
-          - openai
-          - vertex
-    steps:
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.6.6"
-
-      - name: Download built distribution
-        uses: actions/download-artifact@v4
-        with:
-          name: mover-dist
-          path: ${{ runner.temp }}/dist
-
-      - name: Create isolated provider environment
-        shell: bash
-        run: |
-          uv venv --python 3.12 "${RUNNER_TEMP}/provider-venv"
-          echo "${RUNNER_TEMP}/provider-venv/bin" >> "${GITHUB_PATH}"
-          echo "VIRTUAL_ENV=${RUNNER_TEMP}/provider-venv" >> "${GITHUB_ENV}"
-
-      - name: Install provider extra
-        shell: bash
-        run: |
-          wheel=("${RUNNER_TEMP}"/dist/mover-*-py3-none-any.whl)
-          uv pip install \
-            "mover[${{ matrix.extra }}] @ file://${wheel[0]}"
-          uv pip check
-
-      - name: Verify provider imports
-        shell: bash
-        run: |
-          case "${{ matrix.extra }}" in
-            groq)
-              python -c "import groq"
-              ;;
-            ollama)
-              python -c "import ollama"
-              ;;
-            openai)
-              python -c "import openai"
-              ;;
-            vertex)
-              python -c "import google.auth, google.auth.transport.requests, openai"
-              ;;
-          esac
-
   publish:
     name: Publish to PyPI
     if: github.event_name == 'release'
     needs:
       - build
       - profile
-      - provider
     runs-on: ubuntu-24.04
     environment:
       name: pypi
