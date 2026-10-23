@@ -31,9 +31,7 @@ We provide scripts to generate your own dataset of prompts with MoVer. See [`mov
 
 ### Full pipeline installation
 
-Install the complete MoVer animation-generation and verification pipeline,
-including the DSL, synthesis, NLG, default OpenAI/Groq model clients, and
-converter:
+Install the complete MoVer animation generation and verification pipeline.
 
 ```bash
 pip install "mover[full]"
@@ -51,9 +49,9 @@ If you need a platform-specific PyTorch build, install the appropriate build
 from [pytorch.org](https://pytorch.org/get-started/locally/) before installing
 `mover[full]`.
 
-### Converter-only installation
+### Standard installation
 
-If you only need the converter:
+For rendering and LLM access without the DSL, verifier, or Torch:
 
 ```bash
 pip install mover
@@ -67,25 +65,8 @@ uv add mover
 uv run playwright install chromium
 ```
 
-Chromium is installed separately because Playwright must download a browser
-matching its Python package.
-
-### Model-provider and media extras
-
-- The full profile includes OpenAI-compatible clients (OpenAI, Gemini, and
-  remote vLLM servers) and Groq. Set `OPENAI_API_KEY`, `GEMINI_API_KEY`, or
-  `GROQ_API_KEY` for the provider you select.
-- Add Ollama with `pip install "mover[full,ollama]"`.
-- Add Google Vertex authentication with
-  `pip install "mover[full,vertex]"`.
-- Provider-only extras `mover[openai]` and `mover[groq]` are available for
-  direct use of the model client. MoVer connects to vLLM over its
-  OpenAI-compatible HTTP API; it does not install a vLLM server.
-- GIF output requires a working system installation of
-  [FFmpeg](https://ffmpeg.org/).
-- MP4 output uses FFmpeg when available. For MP4 output without FFmpeg, install
-  the OpenCV fallback with `pip install "mover[media]"`. It is already included
-  by `mover[full]`.
+Both installations support cloud and local LLMs through LiteLLM. Chromium
+is needed for rendering, and MP4/GIF export requires [FFmpeg](https://ffmpeg.org/).
 
 ### Development installation
 
@@ -115,6 +96,8 @@ First, to get things started, from the root directory of this repository, run th
 python -m mover.pipeline examples/configs/config_starter.yaml
 ```
 The MoVer pipeline takes in a YAML config file as input. Here, the prompts used are stored in [`examples/prompts/prompts_starter.json`](examples/prompts/prompts_starter.json).
+Each model configuration uses `model: openai/gpt-4.1` (or another LiteLLM model
+identifier), with request settings in `params`, instead of separate `name` and `provider` fields.
 If you look at the JSON file, you can see that, for each prompt, we have populated the `ground_truth_program` field with the MoVer program for verification.
 Running this command should create a directory called `example_output/prompts_starter/`, where you can find the iterations of generated animations with videos.
 

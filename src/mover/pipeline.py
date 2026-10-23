@@ -64,13 +64,8 @@ class BasePipeline(ABC):
             Initialized synthesizer instance
         """
         params = {k: v for k, v in config.get('params', {}).items() if v is not None}
-        if config.get('vllm_serve_port') is not None:
-            params['vllm_serve_port'] = config['vllm_serve_port']
-        
         synthesizer = synthesizer_class(
-            model_name=config['name'],
-            provider=config['provider'],
-            num_ctx=config.get('num_ctx', 128000),
+            model=config['model'],
             params=params
         )
         
@@ -166,7 +161,7 @@ class AnimationPipeline(BasePipeline):
             else:
                 print("\nGenerating verification program")
                 mover_model = self.config['mover_model']
-                print(f"Model:{mover_model['name']}, Provider:{mover_model['provider']}")
+                print(f"Model: {mover_model['model']}")
                 chat_history = [
                     self.mover_synthesizer.compose_sys_msg(mover_model.get('sys_msg')),
                     self.mover_synthesizer.compose_initial_user_prompt(animation_prompt, animation_prompt_data["svg_file_path"])
@@ -204,7 +199,7 @@ class AnimationPipeline(BasePipeline):
         while not is_correct and num_iter < max_iter:
             print(f"\n\n---------iteration {num_iter}---------")
             animation_model = self.config['animation_model']
-            print(f"Chat id: {chat_id_name}, Model: {animation_model['name']}, Provider: {animation_model['provider']}\n")
+            print(f"Chat id: {chat_id_name}, Model: {animation_model['model']}\n")
             
             ## Generate animation code
             html_file_name = f"{chat_id_name}_{num_iter}.html"
@@ -335,7 +330,13 @@ def load_config_from_file(config_path: str) -> Dict[str, Any]:
     ## Validate model sections
     for model_key in ['animation_model', 'mover_model']:
         model_config = config[model_key]
-        required_model = ['name', 'provider']
+        legacy_fields = {'name', 'provider', 'num_ctx', 'vllm_serve_port'} & model_config.keys()
+        if legacy_fields:
+            raise ValueError(
+                f"Obsolete {model_key} settings: {', '.join(sorted(legacy_fields))}. "
+                "Use model: provider/model and put request settings in params."
+            )
+        required_model = ['model']
         missing_model = [m for m in required_model if m not in model_config]
         if missing_model:
             raise ValueError(f"Missing required {model_key} configurations: {', '.join(missing_model)}")

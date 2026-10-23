@@ -1,22 +1,16 @@
 ## Animation synthesizer configuration
 animation_model:
-  name: gpt-4.1            # Required: name of the model to use
-  provider: openai         # Required: provider of the model. Options: openai, gemini, vertex, groq, ollama, vllm-serve
-  num_ctx: null            # Optional: context window size. Only applies to locally hosted models.
-  vllm_serve_port: null    # Optional: port for vLLM server. Only applies if using vLLM via `vllm serve`
+  model: openai/gpt-4.1    # Required: LiteLLM provider/model identifier
   sys_msg: null            # Optional: path to a custom system prompt for the model.
   html_template: null      # Optional: path to a custom HTML template for animation output.
-  params:                  # Optional: parameters for the model. This will likely to vary from model to model.
+  params:                  # Optional: LiteLLM request settings.
     temperature: null
     top_p: null
     seed: null
 
 ## MoVer synthesizer configuration
 mover_model:
-  name: gpt-4.1            # Required: name of the model to use
-  provider: openai         # Required: provider of the model. Options: openai, gemini, vertex, groq, ollama, vllm-serve
-  num_ctx: null            # Optional: context window size. Only applies to locally hosted models.
-  vllm_serve_port: null    # Optional: port for vLLM server. Only applies if using vLLM via `vllm serve`.
+  model: openai/gpt-4.1    # Required: LiteLLM provider/model identifier
   sys_msg: null      # Optional: path to a custom system prompt for the model.
   params:
     temperature: null

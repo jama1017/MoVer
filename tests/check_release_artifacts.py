@@ -143,8 +143,7 @@ def check_wheel(path: Path) -> tuple[set[str], dict[str, bytes], dict[str, objec
     require(metadata["Name"] == "mover", metadata)
     require(metadata["Version"] == expected_version(), metadata)
     require(metadata["Requires-Python"] == "<3.13,>=3.10", metadata)
-    for extra in ("full", "groq", "ollama", "openai", "vertex"):
-        require(extra in metadata["Provides-Extra"], f"Missing extra: {extra}")
+    require(metadata["Provides-Extra"] == ["full"], f"Unexpected installation options: {metadata}")
     return members, contents, metadata
 
 

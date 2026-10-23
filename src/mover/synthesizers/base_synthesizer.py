@@ -2,14 +2,6 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Union
 
-from mover._optional import require_modules
-
-require_modules(
-    extra="full",
-    feature="MoVer synthesis",
-    modules={"jinja2": "Jinja2"},
-)
-
 import jinja2
 from mover.synthesizers.llm_client import LLMClient
 from mover.synthesizers.utils import get_svg_code
@@ -19,15 +11,13 @@ class BaseSynthesizer(ABC):
     ## Name of the system message file to use
     _sys_msg_filepath: str = None
 
-    def __init__(self, model_name: str = "gpt-4.1", provider: str = "openai", num_ctx: int = 128000, params: Dict[str, Any] = {}):
+    def __init__(self, model: str = "openai/gpt-4.1", params: Dict[str, Any] | None = None):
         """
         Initialize the Base Synthesizer.
         
         Args:
-            model_name: Name of the model to use (default: "gpt-4o")
-            provider: LLM provider to use (default: "openai")
-            num_ctx: Max context length. Only used for the locally-hosted models (default: 128000)
-            params: Additional parameters to pass to the LLM client (default: {})
+            model: LiteLLM model identifier (default: "openai/gpt-4.1")
+            params: Additional request settings to pass to LiteLLM
             
         Raises:
             ValueError: If _sys_msg_filepath is not set by subclass
@@ -35,7 +25,7 @@ class BaseSynthesizer(ABC):
         if self._sys_msg_filepath is None:
             raise ValueError("_sys_msg_filepath must be set by subclass")
             
-        self.llm_client = LLMClient(model_name=model_name, provider=provider, num_ctx=num_ctx, params=params)
+        self.llm_client = LLMClient(model=model, params=params)
 
 
     def read_sys_msg(self, sys_msg_file_path: str = None) -> str:

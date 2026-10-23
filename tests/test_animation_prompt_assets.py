@@ -3,7 +3,6 @@ from importlib import resources, util
 from unittest.mock import patch
 
 from mover._optional import require_modules
-from mover.synthesizers.llm_client import LLMClient
 
 
 CONVERTER_ASSETS = resources.files("mover.converter").joinpath("assets")
@@ -104,7 +103,7 @@ class AnimationPromptAssetsTest(unittest.TestCase):
             )
             self.assertIsNone(util.find_spec("mover.composers"))
 
-    def test_full_and_provider_errors_name_the_install_extra(self) -> None:
+    def test_full_dependency_error_names_the_install_command(self) -> None:
         with patch("mover._optional.is_module_available", return_value=False):
             with self.assertRaisesRegex(
                 ModuleNotFoundError,
@@ -115,20 +114,6 @@ class AnimationPromptAssetsTest(unittest.TestCase):
                     feature="The MoVer generation pipeline",
                     modules={"torch": "torch"},
                 )
-
-        missing_groq = ModuleNotFoundError(
-            "No module named 'groq'",
-            name="groq",
-        )
-        with patch(
-            "mover._optional.importlib.import_module",
-            side_effect=missing_groq,
-        ):
-            with self.assertRaisesRegex(
-                ModuleNotFoundError,
-                r'pip install "mover\[groq\]"',
-            ):
-                LLMClient("test", "groq")
 
 
 if __name__ == "__main__":
