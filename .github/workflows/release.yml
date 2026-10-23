@@ -155,13 +155,14 @@ jobs:
 
       - name: Install FFmpeg when missing
         shell: bash
+        timeout-minutes: 10
         run: |
           if ! command -v ffmpeg >/dev/null 2>&1; then
             if [[ "${RUNNER_OS}" == "macOS" ]]; then
               brew install ffmpeg
             else
               sudo apt-get update
-              sudo apt-get install --yes ffmpeg
+              sudo apt-get install --yes --no-install-recommends ffmpeg
             fi
           fi
           ffmpeg -version
