@@ -331,7 +331,9 @@ class TimelineControlBrowserTest(unittest.IsolatedAsyncioTestCase):
                 play();
             }"""
         )
-        await page.wait_for_timeout(75)
+        await page.wait_for_function(
+            "() => tl_to_use.totalTime() > 0", timeout=5000
+        )
         playing = await page.evaluate(
             """() => ({
                 rootTime: gsap.globalTimeline.totalTime(),
